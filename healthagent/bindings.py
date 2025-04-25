@@ -1,0 +1,36 @@
+from ctypes import *
+import os
+import sys
+from time import time
+import asyncio
+
+DCGM_VERSION = os.getenv("DCGM_VERSION")
+
+if DCGM_VERSION >= '4.0.0':
+    bind_path = "/usr/share/datacenter-gpu-manager-4/bindings/python3"
+else:
+    bind_path = "/usr/local/dcgm/bindings/python3"
+
+sys.path.append(bind_path)
+
+try:
+    import pydcgm
+    from dcgm_structs import dcgmExceptionClass
+    import dcgm_structs
+    import dcgm_fields
+    import dcgm_agent
+    import dcgmvalue
+except:
+    pass
+    print("Unable to find dcgm python binding, is PYTHONPATH set properly?")
+    #TODO DON'T EXIT HERE, since we should be able to run even if we cant find bindings.
+    sys.exit(1)
+
+def create_c_callback(func: callable, loop: asyncio.BaseEventLoop):
+    @CFUNCTYPE(None, POINTER(dcgm_structs.c_dcgmPolicyCallbackResponse_v1), c_uint64)
+    def c_callback(response, userData):
+        # copy data into a python struct so that it is the right format and is not lost when "response" var is lost
+        callbackResp = dcgm_structs.c_dcgmPolicyCallbackResponse_v1()
+        memmove(addressof(callbackResp), response, callbackResp.FieldsSizeof())
+        asyncio.run_coroutine_threadsafe(func(callbackResp), loop=loop)
+    return c_callback

@@ -1,0 +1,14 @@
+{
+	"folders": [
+		{
+			"path": "healthagent"
+		}
+	],
+	"extensions": {
+		"recommendations": [
+			"ms-python.debugpy",
+			"ms-python.vscode-pylance",
+			"ms-python.python"
+		]
+	},
+}

@@ -1,33 +1,67 @@
-# Project
+## Healthagent for CycleCloud
 
-> This repo has been populated by an initial template to help get you started. Please
-> make sure to update the content to build a great experience for community-building.
 
-As the maintainer of this project, please make a few updates:
+### Setup
 
-- Improving this README.MD file to provide a great experience
-- Updating SUPPORT.MD with content about this project's support experience
-- Understanding the security reporting process in SECURITY.MD
-- Remove this section from the README
+Healthagent runs as a cluster-init v1 project.
 
-## Contributing
+To build:
 
-This project welcomes contributions and suggestions.  Most contributions require you to agree to a
-Contributor License Agreement (CLA) declaring that you have the right to, and actually do, grant us
-the rights to use your contribution. For details, visit https://cla.opensource.microsoft.com.
+```
+./package.sh
+```
 
-When you submit a pull request, a CLA bot will automatically determine whether you need to provide
-a CLA and decorate the PR appropriately (e.g., status check, comment). Simply follow the instructions
-provided by the bot. You will only need to do this once across all repos using our CLA.
+This script should produce blobs in the blobs directory.
 
-This project has adopted the [Microsoft Open Source Code of Conduct](https://opensource.microsoft.com/codeofconduct/).
-For more information see the [Code of Conduct FAQ](https://opensource.microsoft.com/codeofconduct/faq/) or
-contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additional questions or comments.
+Since healthagent runs as a cluster init project, you can upload the blobs to your storage locker:
 
-## Trademarks
+```
+cyclecloud project upload <locker>
+```
 
-This project may contain trademarks or logos for projects, products, or services. Authorized use of Microsoft 
-trademarks or logos is subject to and must follow 
-[Microsoft's Trademark & Brand Guidelines](https://www.microsoft.com/en-us/legal/intellectualproperty/trademarks/usage/general).
-Use of Microsoft trademarks or logos in modified versions of this project must not cause confusion or imply Microsoft sponsorship.
-Any use of third-party trademarks or logos are subject to those third-party's policies.
+And later in your cluster setup, point "AdditionalClusterInit" to healthagent through the UI or through the template.
+
+### Troubleshooting
+
+Packaging script produces all its logging in `.build.log`. Make sure to check it for errors.
+
+Packaging script does rely on artifact feeds access. If you get prompted for credentials, this may help:
+
+```
+python -m pip install --upgrade pip
+pip install keyring artifacts-keyring
+```
+
+Note: Healthagent setup does not require any global package installation, but if you have the cyclecloud tools repo set and your pip.conf
+pointed to cyclecloud artifacts feed, then the above maybe needed for setting up the venv for healthagent correctly.
+
+After that:
+```
+cfs-helper "https://msazure.pkgs.visualstudio.com/CycleCloud/_packaging/CycleCloud-Prod/"
+```
+
+this should set up the creds correctly.
+
+### Running healthagent
+
+Nothing specifically should be required, installation process already sets up the healhtagent systemd service and starts it.
+
+Here are some runtime details:
+
+- Actual on-the node installation for healthagent lives in `specs/default/cluster-init/00-install.sh`
+- Healthagent installation directory on a node running healthagent is `/opt/healthagent`
+- Installation logs for healthagent go to: `/opt/healthagent/healthagent_install.log`
+- Healthagent service logs live in `/opt/healthagent/healthagent.log`
+
+TODO:
+configuration file based initialization, CLI , and checkpointing.
+
+
+#### Developer Setup
+
+Healthagent relies on DCGM bindings.
+
+Vscode integration is essential to a smooth dev process. #TODO: A script that can set up the bindings so the imports load up in vscode will be added in the future.
+
+Right now vscode settings file adds import paths. A manual step needed would be to grab the bindings from a running node, and place it in the `"${workspaceFolder}/.bindings/dcgm-3.3.7/"` directory.
+

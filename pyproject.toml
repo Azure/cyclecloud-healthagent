@@ -1,0 +1,11 @@
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "healthagent"
+version = "1.0.0"
+dependencies = ["dbus-next", "systemd-python"]
+
+[project.scripts]
+healthagent = "healthagent.main:main"
