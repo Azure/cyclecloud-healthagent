@@ -4,8 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "healthagent"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = ["dbus-next", "systemd-python"]
 
 [project.scripts]
 healthagent = "healthagent.main:main"
+health = "healthagent.client:main"
+
+[tool.setuptools.package-data]
+"healthagent" = ["logging.conf"]

@@ -6,7 +6,7 @@ import subprocess
 from time import time,sleep
 from concurrent.futures import ProcessPoolExecutor
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('healthagent')
 
 class Priority(Enum):
     """

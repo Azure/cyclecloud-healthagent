@@ -4,20 +4,30 @@ import json
 import time
 import logging
 from time import time
+from healthagent import epilog,status
 from healthagent.AsyncScheduler import AsyncScheduler,Priority
 
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
 from healthagent.bindings import *
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('healthagent')
 
 class GpuHealthChecksException(Exception):
     pass
 
+class GpuNotFoundException(Exception):
+    pass
 class GpuHealthChecks:
 
     def __init__(self):
 
+
+        self.dcgmGroup = None
+        self.dcgmHandle = None
+        # Right now we are only looking for nvidia devices.
+        if not os.path.exists("/dev/nvidia0"):
+            log.info("GPU devices not found, skipping GPU checks")
+            raise GpuNotFoundException("No Gpu's Found, Skipping GPU HealthChecks")
         ## Initialize the DCGM Engine as automatic operation mode. This is required when connecting
         ## to a "standalone" hostengine (one that is running separately) but can also be done on an
         ## embedded hostengine.  In this mode, fields are updated
@@ -25,8 +35,7 @@ class GpuHealthChecks:
         ## trigger an update if you wish to view these new fields' values right away.
         self.opMode = dcgm_structs.DCGM_OPERATION_MODE_AUTO
         # create a dcgm handle by connecting to host engine process
-        self.dcgmGroup = None
-        self.dcgmHandle = None
+
         try:
             self.dcgmHandle = pydcgm.DcgmHandle(ipAddress='127.0.0.1', opMode=self.opMode)
 
@@ -52,7 +61,7 @@ class GpuHealthChecks:
         log.debug("Number of GPU's: %d" % len(self.supportedGPUs))
         ## Invoke method to get gpu IDs of the members of the newly-created group
         #groupGpuIds = dcgmGroup.GetGpuIds()
-
+        #TODO: Do we need to enable persistence mode?
         ## Trigger field updates since we just started DCGM (always necessary in MANUAL mode to get recent values)
         self.dcgmSystem.UpdateAllFields(waitForUpdate=True)
 
@@ -99,6 +108,7 @@ class GpuHealthChecks:
     async def create(self):
         log.debug("Adding periodic background healthchecks")
         await AsyncScheduler.add_periodic_task(time(), 60, Priority.HARDWARE_CHECKS_POLL, self.run_background_healthchecks)
+        #await AsyncScheduler.add_periodic_task(time(), 900, Priority.HARDWARE_CHECKS_POLL, self.run_active_healthchecks)
 
     async def handle_policy_violation(self, callbackresp):
         condition = callbackresp.condition
@@ -279,7 +289,7 @@ class GpuHealthChecks:
                     details[gpu_id][system].append(group_health.incidents[index].error.msg)
 
                 description=f"{health_system} {details['Health']} count={details['Incidents']} subsystem={subsystems}"
-                custom_fields['subsystems'] = subsystems
+                custom_fields['categories'] = subsystems
                 custom_fields['error_count'] = details["Incidents"]
                 report = HealthReport(status=status,
                                       description=description,
@@ -295,6 +305,7 @@ class GpuHealthChecks:
             log.exception(f"{e}")
 
 
+    @epilog
     async def run_active_healthchecks(self):
         """
         Run active healthchecks, before or after a job.
@@ -307,6 +318,7 @@ class GpuHealthChecks:
         report = HealthReport()
         errors = []
         failed_tests = []
+        custom_fields = {}
 
         try:
             response = self.dcgmGroup.action.RunDiagnostic(DIAG_LEVEL)
@@ -327,11 +339,13 @@ class GpuHealthChecks:
 
         log.debug("Failed Tests: %s" % ", ".join(failed_tests))
         log.debug("Per GPU Results: %d" % response.gpuCount)
+        categories = set()
         for i in range(0, response.gpuCount):
             for j in range(0, len(response.perGpuResponses[i].results)):
                 if self.dcgm_diag_test_didnt_pass(response.perGpuResponses[i].results[j].result):
                     for k in range(0, len(response.perGpuResponses[i].results[j].error)):
                         error_category = self.dcgm_error_category_to_string(response.perGpuResponses[i].results[j].error[k].category)
+                        categories.add(error_category)
                         if error_category == "NONE":
                             continue
                         severity_message = self.dcgm_error_severity_to_string(response.perGpuResponses[i].results[j].error[k].severity)
@@ -342,14 +356,20 @@ class GpuHealthChecks:
                         isHealthy = False
                         errors.append(msg)
         if not isHealthy:
+            custom_fields['categories'] = categories
+            custom_fields['error_count'] = len(errors)
             report.status=HealthStatus.ERROR
             report.details = json.dumps(errors, indent=4)
-            report.description = f"DCGM Diagnostic Test Failures: {', '.join(failed_tests)}"
+            report.description = f"DCGM Test Failures: {', '.join(failed_tests)}"
+            report.custom_fields = custom_fields
 
         await self.reporter.update_report(name=health_system, report=report)
-        return
+        return report.view()
 
 
+    @status
+    def show_status(self):
+        return self.reporter.summarize()
 
     def __del__(self):
         ## Delete the group

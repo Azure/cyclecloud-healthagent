@@ -1,13 +1,35 @@
 import subprocess
 from enum import Enum
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict, is_dataclass
+import datetime
 from time import time
 from typing import Any,Dict
 import logging
 from healthagent.AsyncScheduler import AsyncScheduler,Priority
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('healthagent')
+
+def make_json_safe(obj):
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    elif isinstance(obj, Enum):
+        return obj.value
+    elif isinstance(obj, datetime.datetime):
+        return obj.isoformat()
+    elif isinstance(obj, set):
+        return list(obj)
+    elif isinstance(obj, dict):
+        return {str(k): make_json_safe(v) for k, v in obj.items()}
+    elif isinstance(obj, (list, tuple)):
+        return [make_json_safe(v) for v in obj]
+    elif is_dataclass(obj):
+        return make_json_safe(asdict(obj))
+    elif hasattr(obj, '__dict__'):
+        return make_json_safe(vars(obj))
+    else:
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
 class HealthStatus(Enum):
     OK = 'OK'
     WARNING = 'Warning'
@@ -20,13 +42,13 @@ class HealthReport:
     "Status of the health"
     status: HealthStatus = HealthStatus.OK
     "Description of status"
-    message: str = ""
+    message: str = None
     "One line description describing the details"
-    description: str = ""
+    description: str = None
     "Detailed message"
-    details: str = ""
+    details: str = None
     "recommended actions"
-    recommendations :str = ""
+    recommendations :str = None
     "custom module specific data"
     custom_fields: Dict[str, Any] = None
 
@@ -37,6 +59,19 @@ class HealthReport:
     def __getattr__(self, item):
         return self.custom_fields.get(item, None)
 
+    def view(self) -> Dict[str, Any]:
+        # Convert the dataclass to a dictionary
+        base_dict = make_json_safe(asdict(self))
+        # Merge custom_fields into the top-level dictionary
+        custom_fields = base_dict.pop("custom_fields", {})
+        base_dict.update(custom_fields)
+        # Filter out keys with None values and convert Enums to their values
+        filtered_dict = {
+            key: (value.value if isinstance(value, Enum) else value)
+            for key, value in base_dict.items()
+            if value is not None
+        }
+        return filtered_dict
 
 class Reporter:
 
@@ -51,11 +86,21 @@ class Reporter:
 
         return self.store.get(name)
 
+    def summarize(self):
+
+        response = {}
+        for name, report in self.store.items():
+            response[name] = report.view()
+        return response
 
     async def update_report(self, name: str, report: HealthReport):
 
-        assert name is not None, "name argument cannot be None"
-        assert report is not None, "report argument cannot be None"
+        if not name:
+            raise ValueError("The 'name' argument cannot be None")
+        if not report:
+            raise ValueError("The 'report' argument cannot be None")
+        if not isinstance(report, HealthReport):
+            raise TypeError("The 'report' argument must be an instance of HealthReport.")
 
         last_report = self.store.get(name)
         if last_report != report:
@@ -66,12 +111,28 @@ class Reporter:
 
         report = self.store.get(name)
         log.debug(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
-        if report.status == HealthStatus.OK:
-            await AsyncScheduler.add_subprocess_task(time(), Priority.GENERAL, self.jetpack, 'condition', 'set', '-n', name, '-s', report.status.value)
-        else:
-            if not report.message:
-                if report.status == HealthStatus.WARNING:
-                    report.message = f"{name} reports warnings"
-                elif report.status == HealthStatus.ERROR:
-                    report.message = f"{name} reports errors"
-            await AsyncScheduler.add_subprocess_task(time(), Priority.GENERAL, self.jetpack, 'condition', 'set', '-n', name, '-s', report.status.value, '-m', report.message, '-d', report.description, '--details', report.details)
+
+        # Prepare default messages for warnings and errors
+        default_messages = {
+            HealthStatus.WARNING: f"{name} reports warnings",
+            HealthStatus.ERROR: f"{name} reports errors",
+        }
+
+        # Set the message if it's missing
+        if report.status in default_messages and not report.message:
+            report.message = default_messages[report.status]
+
+        # Build the command arguments
+        args = [self.jetpack, 'condition', 'set', '-n', name, '-s', report.status.value]
+        if report.status != HealthStatus.OK:
+            if report.message is not None:
+                args.extend(['-m', report.message])
+            if report.description is not None:
+                args.extend(['-d', report.description])
+            if report.recommendations is not None:
+                args.extend(['-r', report.recommendations])
+            if report.details is not None:
+                args.extend(['--details', report.details])
+
+        # Schedule the subprocess task
+        await AsyncScheduler.add_subprocess_task(time(), Priority.GENERAL, *args)

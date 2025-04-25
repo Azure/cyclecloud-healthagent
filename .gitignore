@@ -1,2 +1,5 @@
 blobs/
 build/
+.build/
+.build.log
+.venv/

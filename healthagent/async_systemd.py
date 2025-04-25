@@ -5,10 +5,11 @@ from dbus_next.constants import BusType
 import logging
 import systemd.journal
 from time import time
+from healthagent import status
 from healthagent.AsyncScheduler import AsyncScheduler,Priority
 from healthagent.reporter import Reporter,HealthReport,HealthStatus
 
-log = logging.getLogger(__name__)
+log = logging.getLogger('healthagent')
 class SystemdMonitor:
 
 
@@ -124,3 +125,7 @@ class SystemdMonitor:
             except Exception as e:
                 log.exception(e)
                 raise
+
+    @status
+    def show_status(self):
+        return self.reporter.summarize()

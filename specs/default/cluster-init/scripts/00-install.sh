@@ -3,7 +3,7 @@ set +x
 set -e
 
 # Cluster-Init (v1) script to setup healthagent
-VERSION=1.0.0
+VERSION=1.0.1
 HEALTHAGENT_DIR="/opt/healthagent"
 VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
@@ -39,6 +39,9 @@ setup_venv() {
         apt install -y python3.11 python3.11-venv python3.11-dev
         apt install -y libsystemd-dev
         PYTHON_BIN="/usr/bin/python3.11"
+    elif [ "$OS" == "ubuntu" ] && [[ $VERSION =~ ^24\.* ]]; then
+        apt install -y python3.12 python3.12-venv python3.12-dev
+        apt install -y libsystemd-dev
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
         exit 1
@@ -66,6 +69,8 @@ download_install_healthagent() {
     echo "Installing healthagent package..."
     source $VENV_DIR/bin/activate
     pip install --force-reinstall $PACKAGE
+    # Copy the "health" script to /usr/bin
+    cp $(which health) /usr/bin/
     deactivate
 }
 
