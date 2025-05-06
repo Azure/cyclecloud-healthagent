@@ -58,8 +58,8 @@ class AsyncScheduler:
     """
     heap = []
     running = False
-    stop_event = asyncio.Event()
-    task_ready = asyncio.Event()
+    stop_event = None
+    task_ready = None
 
     @classmethod
     def __get_next_task_time(self):
@@ -72,7 +72,7 @@ class AsyncScheduler:
         while not self.stop_event.is_set():
             now = time()
             while not self.heap:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
 
             while self.heap and self.__get_next_task_time() <= now:
                 task_time, prio, func, args, kwargs = heappop(self.heap)
@@ -98,7 +98,7 @@ class AsyncScheduler:
                     pass
             else:
                 # Avoid busy-waiting
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
 
 
     @classmethod
@@ -117,7 +117,7 @@ class AsyncScheduler:
                 #stdout, stderr = await proc.communicate()
                 #print(stdout)
         except Exception as e:
-            log.error(e)
+            log.exception(e)
         if interval > 0:
             heappush(self.heap, (time() + interval, priority, self.__task_wrapper, (interval, priority, function) + args, kwargs))
             self.task_ready.set()
@@ -129,7 +129,8 @@ class AsyncScheduler:
         with defined priority (higher number means low priority).
         """
         heappush(self.heap, (when, priority, self.__task_wrapper, (interval, priority, function) + args, kwargs))
-        self.task_ready.set()
+        if self.task_ready:
+            self.task_ready.set()
 
     @classmethod
     async def add_task(self, when: int, priority: int, function, *args, **kwargs):
@@ -140,7 +141,8 @@ class AsyncScheduler:
         """
         heappush(self.heap, (when, priority, self.__task_wrapper, (-1, priority, function) + args, kwargs))
         #heappush(self.heap, (when, priority, function, args, kwargs))
-        self.task_ready.set()
+        if self.task_ready:
+            self.task_ready.set()
 
     @classmethod
     async def add_subprocess_task(self, when:int, priority: int, *args, **kwargs):
@@ -154,10 +156,13 @@ class AsyncScheduler:
         """
         heappush(self.heap, (when, priority, self.__task_wrapper, (-1, priority, None) + args, kwargs))
         #heappush(self.heap, (when, priority, None, args, kwargs))
-        self.task_ready.set()
+        if self.task_ready:
+            self.task_ready.set()
 
     @classmethod
     async def start(self):
+        self.stop_event = asyncio.Event()
+        self.task_ready = asyncio.Event()
         self.stop_event.clear()
         asyncio.create_task(self.__run())
 

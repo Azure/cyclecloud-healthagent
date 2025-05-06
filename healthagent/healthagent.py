@@ -101,7 +101,7 @@ class Healthagent:
             await gpu.create()
         except GpuNotFoundException as e:
             log.debug(e)
-        except GpuHealthChecksException as e:
+        except Exception as e:
             log.exception(e)
 
         try:

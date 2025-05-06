@@ -3,6 +3,7 @@ import sys
 import json
 import time
 import logging
+import os
 from time import time
 from healthagent import epilog,status
 from healthagent.AsyncScheduler import AsyncScheduler,Priority
@@ -72,28 +73,45 @@ class GpuHealthChecks:
         self.dcgmGroup.health.Set(dcgm_structs.DCGM_HEALTH_WATCH_ALL)
 
         ## Setting self.Policy
+
+        ## Field Id's for double bit ECC
+        # DCGM_FI_DEV_ECC_DBE_VOL_DEV
         self.policy = dcgm_structs.c_dcgmPolicy_v1()
         self.policy.version = dcgm_structs.dcgmPolicy_version1
         self.policy.condition = dcgm_structs.DCGM_POLICY_COND_DBE
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_DBE].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_DBE].val.boolean = True
 
+        ## Field Id's for PCIe errors
+        # DCGM_FI_DEV_PCIE_REPLAY_COUNTER
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_PCI
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].val.llval = 1
 
+        ## Field Id's for NVLink errors
+        # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL,
+        # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL,
+        # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,
+        # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL,
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_NVLINK
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].val.boolean = True
 
+        ## Field Id's for XID Errors
+        # DCGM_FI_DEV_XID_ERRORS
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_XID
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].val.boolean = True
 
+        ## Field Id's for thermal violations
+        # DCGM_FI_DEV_GPU_TEMP
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_THERMAL
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].tag = 1
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = 90
 
+        ## Field Id for retired pages
+        # DCGM_FI_DEV_RETIRED_SBE
+        # DCGM_FI_DEV_RETIRED_DBE
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].tag = 1
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].val.boolean = True
@@ -108,7 +126,6 @@ class GpuHealthChecks:
     async def create(self):
         log.debug("Adding periodic background healthchecks")
         await AsyncScheduler.add_periodic_task(time(), 60, Priority.HARDWARE_CHECKS_POLL, self.run_background_healthchecks)
-        #await AsyncScheduler.add_periodic_task(time(), 900, Priority.HARDWARE_CHECKS_POLL, self.run_active_healthchecks)
 
     async def handle_policy_violation(self, callbackresp):
         condition = callbackresp.condition
@@ -263,14 +280,13 @@ class GpuHealthChecks:
         custom_fields = {}
         try:
             try:
-                details = {}
+                details = list()
                 subsystems = set()
                 group_health = self.dcgmGroup.health.Check()
                 status = self.convert_overall_health_to_string(group_health.overallHealth)
-                details['Health'] = status.value
-                details["Incidents"] = group_health.incidentCount
+                error_count = group_health.incidentCount
 
-                if status == HealthStatus.OK and details["Incidents"] == 0:
+                if status == HealthStatus.OK and error_count == 0:
                     report = HealthReport()
                     await self.reporter.update_report(name=health_system, report=report)
                     return
@@ -278,22 +294,18 @@ class GpuHealthChecks:
                     log.error("Invalid health status received")
                     return
 
-                for index in range (0, group_health.incidentCount):
+                for index in range (0, error_count):
                     gpu_id = group_health.incidents[index].entityInfo.entityId
-                    if gpu_id not in details:
-                        details[gpu_id] = {}
                     system = self.convert_system_enum_to_system_name(group_health.incidents[index].system)
                     subsystems.add(system)
-                    if system not in details[gpu_id]:
-                        details[gpu_id][system] = []
-                    details[gpu_id][system].append(group_health.incidents[index].error.msg)
+                    details.append(group_health.incidents[index].error.msg)
 
-                description=f"{health_system} {details['Health']} count={details['Incidents']} subsystem={subsystems}"
+                description=f"{health_system} report {status.value} count={error_count} subsystem={', '.join(subsystems)}"
                 custom_fields['categories'] = subsystems
-                custom_fields['error_count'] = details["Incidents"]
+                custom_fields['error_count'] = error_count
                 report = HealthReport(status=status,
                                       description=description,
-                                      details=json.dumps(details, indent=4),
+                                      details='\n'.join(details),
                                       custom_fields=custom_fields)
                 await self.reporter.update_report(name=health_system, report=report)
                 return
@@ -304,8 +316,71 @@ class GpuHealthChecks:
         except Exception as e:
             log.exception(f"{e}")
 
-
     @epilog
+    async def run_active_healthchecksv2(self):
+
+        """
+        Run active healthchecks, before or after a job.
+        These checks do require exclusive access to the GPU's and cannot
+        be run alongside jobs.
+        """
+        health_system = f"ActiveDCGMHealthChecks"
+        DIAG_LEVEL=dcgm_structs.DCGM_DIAG_LVL_MED
+        isHealthy = True
+        report = HealthReport()
+        custom_fields = {}
+
+        try:
+            response = self.dcgmGroup.action.RunDiagnostic(DIAG_LEVEL)
+        except dcgmExceptionClass(dcgm_structs.DCGM_ST_NOT_CONFIGURED):
+            log.error("One of the GPUs on your system is not supported by NVVS")
+        except dcgmExceptionClass(dcgm_structs.DCGM_ST_GROUP_INCOMPATIBLE):
+            log.error("GPUs in the group are not compatible with each other for running diagnostics")
+        except dcgmExceptionClass(dcgm_structs.DCGM_ST_NVVS_ERROR) as e:
+            if not self.should_ignore_error(e):
+               raise(e)
+            else:
+                log.error(str(e))
+        tests = response.tests[:min(response.numTests, dcgm_structs.DCGM_DIAG_RESPONSE_TESTS_MAX)]
+        errors = response.errors[:min(response.numErrors, dcgm_structs.DCGM_DIAG_RESPONSE_ERRORS_MAX)]
+        #entities = response.entities[:min(response.numEntities, dcgm_structs.DCGM_DIAG_RESPONSE_ENTITIES_MAX)]
+        info = response.info[:min(response.numInfo, dcgm_structs.DCGM_DIAG_RESPONSE_INFO_MAX)]
+        #results = response.results[:min(response.numResults, dcgm_structs.DCGM_DIAG_RESPONSE_RESULTS_MAX)]
+        categories = response.categories[:min(response.numCategories, dcgm_structs.DCGM_DIAG_RESPONSE_CATEGORIES_MAX)]
+
+        test_types = set()
+        failures = list()
+        for test in tests:
+            log.debug("%s" % test.name)
+            info_msgs = map(lambda infoidx: info[infoidx], test.infoIndices[:min(test.numInfo, dcgm_structs.DCGM_DIAG_TEST_RUN_INFO_INDICES_MAX)])
+            for msgs in info_msgs:
+                log.debug(f"test: {test.name}, info msg: {msgs}")
+            if self.dcgm_diag_test_didnt_pass(test.result):
+                isHealthy = False
+                testErrors = map(lambda errIdx: errors[errIdx], test.errorIndices[:min(test.numErrors, dcgm_structs.DCGM_DIAG_TEST_RUN_ERROR_INDICES_MAX)])
+                test_category = response.categories[test.categoryIndex].value.decode()
+                log.debug("%s" % test_category)
+                test_types.add(f"{test.name}-{test_category}")
+                for err in testErrors:
+                    if err.entity.entityGroupId == dcgm_fields.DCGM_FE_GPU:
+                        failures.append(f"GPU {err.entity.entityId}: {err.msg}")
+                    elif err.entity.entityGroupId == dcgm_fields.DCGM_FE_NONE and err.entity.entityId == 0:
+                        failures.append(f"{err.msg}")
+
+        if not isHealthy:
+            custom_fields['failures'] = test_types
+            custom_fields['error_count'] = len(failures)
+            report.status = HealthStatus.ERROR
+            report.details = "\n".join(failures)
+            report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
+            report.message = "GPU Epilog Errors"
+            report.custom_fields = custom_fields
+        await self.reporter.update_report(name=health_system, report=report)
+        return report.view()
+
+
+
+
     async def run_active_healthchecks(self):
         """
         Run active healthchecks, before or after a job.

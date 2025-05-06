@@ -44,7 +44,8 @@ setup_venv() {
         apt install -y libsystemd-dev
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
-        exit 1
+        # dont exit 0
+        exit 0
     fi
     # Create the virtual environment
     echo "Creating virtual environment at $VENV_DIR..."
