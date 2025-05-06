@@ -108,6 +108,7 @@ class AsyncScheduler:
 
         """
         proc: asyncio.subprocess.Process = None
+        cancellation = False
         log.debug(f"interval: {interval}, priority: {priority} function: {function} args: {args} kwargs: {kwargs}")
         try:
             if function and callable(function):
@@ -116,9 +117,12 @@ class AsyncScheduler:
                 proc = await asyncio.subprocess.create_subprocess_exec(*args, stderr=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, **kwargs)
                 #stdout, stderr = await proc.communicate()
                 #print(stdout)
+        except self.CancelTask:
+            cancellation = True
         except Exception as e:
             log.exception(e)
-        if interval > 0:
+        # Don't schedule periodic task if cancellation is set
+        if interval > 0 and cancellation == False:
             heappush(self.heap, (time() + interval, priority, self.__task_wrapper, (interval, priority, function) + args, kwargs))
             self.task_ready.set()
 
@@ -131,6 +135,13 @@ class AsyncScheduler:
         heappush(self.heap, (when, priority, self.__task_wrapper, (interval, priority, function) + args, kwargs))
         if self.task_ready:
             self.task_ready.set()
+
+    class CancelTask(Exception):
+        pass
+
+    @classmethod
+    def cancel_task(self):
+        raise self.CancelTask
 
     @classmethod
     async def add_task(self, when: int, priority: int, function, *args, **kwargs):
