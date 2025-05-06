@@ -60,14 +60,24 @@ class GpuHealthChecks:
             self.dcgmGroup.AddGpu(gpu)
         log.debug("Initialized DCGM Monitor")
         log.debug("Number of GPU's: %d" % len(self.supportedGPUs))
-        ## Invoke method to get gpu IDs of the members of the newly-created group
-        #groupGpuIds = dcgmGroup.GetGpuIds()
+
         #TODO: Do we need to enable persistence mode?
         ## Trigger field updates since we just started DCGM (always necessary in MANUAL mode to get recent values)
         self.dcgmSystem.UpdateAllFields(waitForUpdate=True)
 
         ## Get the current configuration for the group
-        #config_values = dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
+        config_values = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
+        ## Invoke method to get gpu IDs of the members of the newly-created group
+        groupGpuIds = self.dcgmGroup.GetGpuIds()
+        ## Display current configuration for the group
+        for x in range(0, len(groupGpuIds)):
+            log.debug("GPU Id      : %d" % (config_values[x].gpuId))
+            log.debug("Ecc  Mode   : %s" % (self.convert_value_to_string(config_values[x].mEccMode)))
+            log.debug("Sync Boost  : %s" % (self.convert_value_to_string(config_values[x].mPerfState.syncBoost)))
+            log.debug("Mem Clock   : %s" % (self.convert_value_to_string(config_values[x].mPerfState.targetClocks.memClock)))
+            log.debug("SM  Clock   : %s" % (self.convert_value_to_string(config_values[x].mPerfState.targetClocks.smClock)))
+            log.debug("Power Limit : %s" % (self.convert_value_to_string(config_values[x].mPowerLimit.val)))
+            log.debug("Compute Mode: %s" % (self.convert_value_to_string(config_values[x].mComputeMode)))
 
         ## Add the health watches
         self.dcgmGroup.health.Set(dcgm_structs.DCGM_HEALTH_WATCH_ALL)
@@ -161,6 +171,27 @@ class GpuHealthChecks:
 
         if system == dcgm_structs.DCGM_HEALTH_WATCH_DRIVER:
             return "Driver"
+
+    ## Helper method to convert DCGM value to string
+    def convert_value_to_string(self, value):
+        v = dcgmvalue.DcgmValue(value)
+
+        try:
+            if (v.IsBlank()):
+                return "N/A"
+            else:
+                return v.__str__()
+        except:
+            ## Exception is generally thorwn when int32 is
+            ## passed as an input. Use additional methods to fix it
+            sys.exc_clear()
+            v = dcgmvalue.DcgmValue(0)
+            v.SetFromInt32(value)
+
+            if (v.IsBlank()):
+                return "N/A"
+            else:
+                return v.__str__()
 
     def convert_overall_health_to_string(self, health):
         """
