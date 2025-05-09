@@ -9,7 +9,7 @@ VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
 SERVICE_FILE="/etc/systemd/system/healthagent.service"
 PACKAGE="healthagent-$VERSION.tar.gz"
-DCGM_VERSION="3.3.7"
+DCGM_VERSION="4.2.3"
 
 
 setup_venv() {
@@ -74,20 +74,62 @@ download_install_healthagent() {
     cp $(which health) /usr/bin/
     deactivate
 }
+setup_dcgm() {
+    echo "Setting up DCGM (Datacenter GPU Manager)..."
 
-setup_environment_variables() {
-    echo "Setting environment variables"
-    # hacky #TODO: need to really remove this here
-    # Check if nv-hostengine exists and retrieve the version
+    # Detect the operating system
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+        VERSION_ID=$VERSION_ID
+    else
+        echo "Cannot detect the operating system."
+        exit 1
+    fi
+
+    # Define the minimum required version
+    REQUIRED_VERSION="4.2.3"
+
+    # Check if dcgmi is installed and get the installed version
+    if command -v dcgmi &> /dev/null; then
+        INSTALLED_VERSION=$(dcgmi --version | grep -i "version" | awk '{print $3}')
+        echo "Installed DCGM version: $INSTALLED_VERSION"
+    else
+        echo "DCGM is not installed."
+        INSTALLED_VERSION=""
+    fi
+
+    # Compare the installed version with the required version
+    if [ -z "$INSTALLED_VERSION" ] || [ "$(printf '%s\n' "$REQUIRED_VERSION" "$INSTALLED_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
+        echo "DCGM version is older than $REQUIRED_VERSION or not installed. Installing the latest package..."
+        if [ "$OS" == "almalinux" ]; then
+            yum install --allowerasing -y datacenter-gpu-manager-4-core
+            yum install --allowerasing -y datacenter-gpu-manager-4-cuda12
+        elif [ "$OS" == "ubuntu" ]; then
+            apt update
+            apt install -y datacenter-gpu-manager-4-core
+            apt install -y datacenter-gpu-manager-4-cuda12
+        else
+            echo "Unsupported operating system: $OS $VERSION_ID"
+            exit 1
+        fi
+    else
+        echo "DCGM is up-to-date."
+    fi
+
+    # Set environment variables
+    echo "Setting environment variables..."
     if command -v nv-hostengine &> /dev/null; then
         DCGM_VERSION=$(nv-hostengine --version | grep -i Version | awk '{print $3}' || echo "")
     else
         DCGM_VERSION=""
     fi
+
+    systemctl daemon-reload
+    systemctl restart nvidia-dcgm
     echo "export DCGM_VERSION=$DCGM_VERSION" >> $VENV_DIR/bin/activate
     echo "export HEALTHAGENT_DIR=$HEALTHAGENT_DIR" >> $VENV_DIR/bin/activate
 }
-
 
 setup_systemd() {
     # Create the systemd service file
@@ -124,7 +166,7 @@ mkdir -p $HEALTHAGENT_DIR
 {
     setup_venv
     download_install_healthagent
-    setup_environment_variables
+    setup_dcgm
     setup_systemd
     systemctl start healthagent
 } &> $LOG_FILE
