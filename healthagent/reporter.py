@@ -1,4 +1,5 @@
 import subprocess
+import copy
 from enum import Enum
 from collections import deque
 from dataclasses import dataclass, asdict, is_dataclass
@@ -84,7 +85,10 @@ class Reporter:
 
     def get_report(self, name) -> HealthReport:
 
-        return self.store.get(name)
+        data = self.store.get(name)
+        if data:
+            return copy.deepcopy(data)
+        return data
 
     def summarize(self):
 
