@@ -7,7 +7,7 @@ import os
 from time import time
 from healthagent import epilog,status
 from healthagent.AsyncScheduler import AsyncScheduler,Priority
-
+from dataclasses import asdict
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
 from healthagent.bindings import *
 
@@ -25,6 +25,11 @@ class GpuHealthChecks:
 
         self.dcgmGroup = None
         self.dcgmHandle = None
+
+        self.policy = None
+        self.policy_fields = []
+        self.watch_fields = []
+        self.gpu_config = []
         # Right now we are only looking for nvidia devices.
         if not os.path.exists("/dev/nvidia0"):
             log.info("GPU devices not found, skipping GPU checks")
@@ -32,11 +37,9 @@ class GpuHealthChecks:
         ## Initialize the DCGM Engine as automatic operation mode. This is required when connecting
         ## to a "standalone" hostengine (one that is running separately) but can also be done on an
         ## embedded hostengine.  In this mode, fields are updated
-        ## periodically based on their configured frequency.  When watching new fields you must still manually
-        ## trigger an update if you wish to view these new fields' values right away.
+        ## periodically based on their configured frequency.
         self.opMode = dcgm_structs.DCGM_OPERATION_MODE_AUTO
         # create a dcgm handle by connecting to host engine process
-
         try:
             self.dcgmHandle = pydcgm.DcgmHandle(ipAddress='127.0.0.1', opMode=self.opMode)
 
@@ -66,26 +69,22 @@ class GpuHealthChecks:
         self.dcgmSystem.UpdateAllFields(waitForUpdate=True)
 
         ## Get the current configuration for the group
-        config_values = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
-        ## Invoke method to get gpu IDs of the members of the newly-created group
-        groupGpuIds = self.dcgmGroup.GetGpuIds()
-        ## Display current configuration for the group
-        for x in range(0, len(groupGpuIds)):
-            log.debug("GPU Id      : %d" % (config_values[x].gpuId))
-            log.debug("Ecc  Mode   : %s" % (self.convert_value_to_string(config_values[x].mEccMode)))
-            log.debug("Sync Boost  : %s" % (self.convert_value_to_string(config_values[x].mPerfState.syncBoost)))
-            log.debug("Mem Clock   : %s" % (self.convert_value_to_string(config_values[x].mPerfState.targetClocks.memClock)))
-            log.debug("SM  Clock   : %s" % (self.convert_value_to_string(config_values[x].mPerfState.targetClocks.smClock)))
-            log.debug("Power Limit : %s" % (self.convert_value_to_string(config_values[x].mPowerLimit.val)))
-            log.debug("Compute Mode: %s" % (self.convert_value_to_string(config_values[x].mComputeMode)))
+        self.gpu_config = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
+        self.__display_gpu_config()
+        self.setup_dcgm_policy()
+        self.setup_background_watches()
+        self.reporter = Reporter()
+        log.debug("Initialized GPU Healthchecks")
 
-        ## Add the health watches
-        self.dcgmGroup.health.Set(dcgm_structs.DCGM_HEALTH_WATCH_ALL)
-
-        ## Setting self.Policy
+    def setup_dcgm_policy(self):
+        """
+        Setup policy violations and thresholds.
+        Add required fields for tracking.
+        """
 
         ## Field Id's for double bit ECC
-        # DCGM_FI_DEV_ECC_DBE_VOL_DEV
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_ECC_DBE_VOL_DEV)
+        # Device memory double bit volatile ECC errors
         self.policy = dcgm_structs.c_dcgmPolicy_v1()
         self.policy.version = dcgm_structs.dcgmPolicy_version1
         self.policy.condition = dcgm_structs.DCGM_POLICY_COND_DBE
@@ -93,53 +92,164 @@ class GpuHealthChecks:
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_DBE].val.boolean = True
 
         ## Field Id's for PCIe errors
-        # DCGM_FI_DEV_PCIE_REPLAY_COUNTER
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_PCIE_REPLAY_COUNTER)
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_PCI
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].val.llval = 1
 
         ## Field Id's for NVLink errors
-        # DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL,
-        # DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL,
-        # DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,
-        # DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL,
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL)
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL)
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL)
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL)
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_NVLINK
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].val.boolean = True
 
         ## Field Id's for XID Errors
-        # DCGM_FI_DEV_XID_ERRORS
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_XID_ERRORS)
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_XID
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].tag = 0
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].val.boolean = True
 
         ## Field Id's for thermal violations
-        # DCGM_FI_DEV_GPU_TEMP
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_GPU_TEMP)
+        # Above 85 degrees GPU performance begins to drop significantly leading to shutdown so we set the threshold to 90% of that.
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_THERMAL
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].tag = 1
-        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = 90
+        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = 76
 
         ## Field Id for retired pages
-        # DCGM_FI_DEV_RETIRED_SBE
-        # DCGM_FI_DEV_RETIRED_DBE
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_RETIRED_SBE)
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_RETIRED_DBE)
         self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED
         self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].tag = 1
-        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].val.boolean = True
+        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].val.llval = 8
 
+        ## Field Id for power usage
+        self.policy_fields.append(dcgm_fields.DCGM_FI_DEV_POWER_USAGE)
+        # Set violation to 90% of allowed maximum power limit.
+        self.policy.condition |= dcgm_structs.DCGM_POLICY_COND_POWER
+        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].tag = 1
+        self.policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].val.llval = int(0.9 * (self.gpu_config[0].mPowerLimit.val))
 
         self.dcgmGroup.policy.Set(self.policy)
         self.c_callback = create_c_callback(self.handle_policy_violation, asyncio.get_running_loop())
         self.dcgmGroup.policy.Register(self.policy.condition, self.c_callback, None)
-        self.reporter = Reporter()
-        log.debug("Initialized GPU Healthchecks")
+        log.debug("Applied GPU violation Policies")
+
+    def setup_background_watches(self):
+        """
+        Setup field watches and health watches.
+        """
+        # TODO: Add more fields to watch fields in addition to policy fields
+        # but for now just add policy fields.
+        if self.policy_fields:
+            self.watch_fields = self.policy_fields
+        self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=self.watch_fields)
+        ## Add the health watches
+        self.dcgmGroup.health.Set(dcgm_structs.DCGM_HEALTH_WATCH_ALL)
+
+    def __display_gpu_config(self):
+
+        ## Invoke method to get gpu IDs of the members of the newly-created group
+        groupGpuIds = self.dcgmGroup.GetGpuIds()
+        ## Display current configuration for the group
+        for x in range(0, len(groupGpuIds)):
+            log.debug("GPU Id      : %d" % (self.gpu_config[x].gpuId))
+            log.debug("Ecc  Mode   : %s" % (self.convert_value_to_string(self.gpu_config[x].mEccMode)))
+            log.debug("Sync Boost  : %s" % (self.convert_value_to_string(self.gpu_config[x].mPerfState.syncBoost)))
+            log.debug("Mem Clock   : %s" % (self.convert_value_to_string(self.gpu_config[x].mPerfState.targetClocks.memClock)))
+            log.debug("SM  Clock   : %s" % (self.convert_value_to_string(self.gpu_config[x].mPerfState.targetClocks.smClock)))
+            log.debug("Power Limit : %s" % (self.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
+            log.debug("Compute Mode: %s" % (self.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
     async def create(self):
         log.debug("Adding periodic background healthchecks")
         await AsyncScheduler.add_periodic_task(time(), 60, Priority.HARDWARE_CHECKS_POLL, self.run_background_healthchecks)
 
     async def handle_policy_violation(self, callbackresp):
+
+        health_system = "GPUPolicyChecks"
+        report = self.reporter.get_report(health_system) or HealthReport()
         condition = callbackresp.condition
-        log.error("Violation detected: %s" % self.dcgm_condition_to_string(condition=condition))
+        gpuid = callbackresp.gpuId
+        try:
+            condition_str = self.dcgm_condition_to_string(condition=condition)
+        except ValueError as e:
+            log.exception(e)
+            return
+
+        log.critical("Violation detected: %s  on gpu: %d" % (condition_str, gpuid))
+
+        if condition_str not in report.custom_fields:
+            report.custom_fields[condition_str] = {}
+            # violation data is a 2D dict containing violation results indexed by condition and gpu id. vd[condition][gpuid]
+            vd = {}
+        else:
+            vd = report.custom_fields[condition_str]
+
+        #vd['timestamp'] = condition.val.timestamp
+        if gpuid not in vd:
+            vd[gpuid] = {}
+
+        info = vd[gpuid]
+        if condition == dcgm_structs.DCGM_POLICY_COND_DBE:
+            if 'location' not in info:
+                info['location'] = set()
+            info['location'].add(next(key for key, value in dcgm_structs.c_dcgmPolicyConditionDbe_t.LOCATIONS.items() if value == callbackresp.val.dbe.location))
+            info['numerrors'] = callbackresp.val.dbe.numerrors
+            violation_descr = f"Double-Bit ECC errors({info['numerrors']}) found at location: {info['location']} on GPU: {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_PCI:
+            info['replay_count'] = callbackresp.val.pci.counter
+            violation_descr = f"PCI replay count({info['replay_count']}) on GPU: {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_NVLINK:
+            info['error_count'] = callbackresp.val.nvlink.counter
+            if 'field_id' not in info:
+                info['field_id'] = set()
+            info['field_id'].add(callbackresp.val.nvlink.fieldId)
+            violation_descr =f"Nvlink violation on GPU: {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_XID:
+            if 'xid_error' not in info:
+                info['xid_error'] = set()
+            info['xid_error'].add(callbackresp.val.xid.errnum)
+            violation_descr = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
+            info['temperature'] = callbackresp.val.thermal.thermalViolation
+            violation_descr = f"Thermal violation detected: Temperature reached (celsius) {info['temperature']} GPU: {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
+            info['power_usage'] = callbackresp.val.power.powerViolation
+            violation_descr = f"Power violation detected: Power draw (watts) {info['power']} GPU: {gpuid}"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
+            info['sbepage_count'] = callbackresp.val.mpr.sbepages
+            info['dbepage_count'] = callbackresp.val.mpr.dbepages
+            violation_descr = f"Max retired pages violation: SBE retired pages: {info['sbepage_count']}, DBE retired pages {info['dbepage_count']} GPU: {gpuid}"
+
+        vd[gpuid] = info
+        report.custom_fields[condition_str] = vd
+
+        report.status = HealthStatus.ERROR
+        report.description = "GPU Policy Violations detected"
+        if not report.details:
+            report.details = violation_descr
+        else:
+            report.details += "\n"
+            report.details += violation_descr
+        log.debug(asdict(report))
+        await self.reporter.update_report(name=health_system, report=report)
+        return
+
+    async def track_fields(self):
+
+        try:
+            response = self.dcgmGroup.samples.GetLatest(self.field_group)
+            for gpu in response.values:
+                log.debug(f"Field structure per gpu: {response.values[gpu]}")
+                for field in self.watch_fields:
+                    log.debug(f"field name: {field}")
+                    log.debug(f"field value: {response.values[gpu][field][0].value}")
+        except Exception as e:
+            log.exception(e)
 
     def convert_system_enum_to_system_name(self, system):
         if system == dcgm_structs.DCGM_HEALTH_WATCH_PCIE:
@@ -241,15 +351,15 @@ class GpuHealthChecks:
         if condition == dcgm_structs.DCGM_POLICY_COND_DBE:
             return "Double-bit ECC"
         elif condition == dcgm_structs.DCGM_POLICY_COND_PCI:
-            return "PCIe replays"
+            return "PCIe Replays"
         elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
-            return "Maximum number of retired pages"
-        elif condition == dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL:
-            return "Thermal self.policy violation"
+            return "Max Retired Pages"
+        elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
+            return "Thermal Violation"
         elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
-            return "Power self.policy violation"
+            return "Power Violation"
         elif condition == dcgm_structs.DCGM_POLICY_COND_NVLINK:
-            return "Nvlink self.policy violation"
+            return "Nvlink Violation"
         elif condition == dcgm_structs.DCGM_POLICY_COND_XID:
             return "XID Violation"
         else:

@@ -3,7 +3,7 @@ import os
 import sys
 from time import time
 import asyncio
-
+from healthagent.AsyncScheduler import AsyncScheduler,Priority
 DCGM_VERSION = os.getenv("DCGM_VERSION")
 
 if DCGM_VERSION >= '4.0.0':
@@ -20,6 +20,7 @@ try:
     import dcgm_fields
     import dcgm_agent
     import dcgmvalue
+    import DcgmFieldGroup
 except:
     pass
     print("Unable to find dcgm python binding, is PYTHONPATH set properly?")
@@ -41,7 +42,8 @@ def create_c_callbackv2(func: callable, loop: asyncio.BaseEventLoop):
         # copy data into a python struct so that it is the right format and is not lost when "response" var is lost
         callbackResp = dcgm_structs.c_dcgmPolicyCallbackResponse_v2()
         memmove(addressof(callbackResp), response, callbackResp.FieldsSizeof())
-        asyncio.run_coroutine_threadsafe(func(callbackResp), loop=loop)
+        coro = AsyncScheduler.add_task(time(),Priority.HARDWARE_EVENT_CALLBACK,func, callbackResp)
+        asyncio.run_coroutine_threadsafe(coro=coro, loop=loop)
     return c_callback
 
 # Dynamically expose only the relevant callback function based on DCGM version
@@ -59,4 +61,5 @@ __all__ = [
     "dcgm_agent",
     "dcgmvalue",
     "dcgmExceptionClass",
+    "DcgmFieldGroup"
 ]
