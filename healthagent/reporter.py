@@ -102,16 +102,6 @@ class Reporter:
         if not isinstance(report, HealthReport):
             raise TypeError("The 'report' argument must be an instance of HealthReport.")
 
-        last_report = self.store.get(name)
-        if last_report != report:
-            self.store[name] = report
-            await self._report_health_status(name)
-
-    async def _report_health_status(self, name):
-
-        report = self.store.get(name)
-        log.debug(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
-
         # Prepare default messages for warnings and errors
         default_messages = {
             HealthStatus.WARNING: f"{name} reports warnings",
@@ -121,6 +111,17 @@ class Reporter:
         # Set the message if it's missing
         if report.status in default_messages and not report.message:
             report.message = default_messages[report.status]
+
+
+        last_report = self.store.get(name)
+        if not last_report or (asdict(last_report) != asdict(report)):
+            self.store[name] = report
+            await self._report_health_status(name)
+
+    async def _report_health_status(self, name):
+
+        report = self.store.get(name)
+        log.debug(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
 
         # Build the command arguments
         args = [self.jetpack, 'condition', 'set', '-n', name, '-s', report.status.value]
