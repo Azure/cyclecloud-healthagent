@@ -216,10 +216,10 @@ class GpuHealthChecks:
             violation_descr = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
             info['temperature'] = callbackresp.val.thermal.thermalViolation
-            violation_descr = f"Thermal violation detected: Temperature reached (celsius) {info['temperature']} GPU: {gpuid}"
+            violation_descr = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
-            info['power_usage'] = callbackresp.val.power.powerViolation
-            violation_descr = f"Power violation detected: Power draw (watts) {info['power']} GPU: {gpuid}"
+            info['power'] = callbackresp.val.power.powerViolation
+            violation_descr = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
             info['sbepage_count'] = callbackresp.val.mpr.sbepages
             info['dbepage_count'] = callbackresp.val.mpr.dbepages
@@ -234,6 +234,7 @@ class GpuHealthChecks:
             report.details = violation_descr
         else:
             report.details += "\n"
+            #TODO Fix
             report.details += violation_descr
         log.debug(asdict(report))
         await self.reporter.update_report(name=health_system, report=report)
