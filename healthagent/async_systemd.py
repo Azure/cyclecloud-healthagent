@@ -73,7 +73,7 @@ class SystemdMonitor:
                 await self.reporter.update_report(name=service, report=report)
             elif active_state == "active" and substate == "running":
                 if self.state.get(service) == "failed":
-                    log.info(f"{service} Service Recovered")
+                    log.info(f"{service} Service Healthy")
                     report.status = HealthStatus.OK
                     await self.reporter.update_report(name=service, report=report)
 
@@ -112,7 +112,12 @@ class SystemdMonitor:
                 introspect = await self.bus.introspect("org.freedesktop.systemd1", unit_name)
                 unit_obj = self.bus.get_proxy_object("org.freedesktop.systemd1", unit_name, introspect)
                 properties_iface = unit_obj.get_interface("org.freedesktop.DBus.Properties")
+                # Do an initial check to set the state of the service. Useful if the service to monitor is already in failed state.
+                curr_active_state = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'ActiveState')
+                curr_substate = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'SubState')
+                await self.set_current_state(service=service, active_state=curr_active_state.value, substate=curr_substate.value)
                 callback = self.create_callback(unit=unit_name, service_name=service)
+                # Set on_properties_changed callback to allow dbus to run our callback if there is any change in the state of the service.
                 properties_iface.on_properties_changed(callback)
                 log.debug(f"Monitoring '{unit_name}'")
             except DBusError as e:
