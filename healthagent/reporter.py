@@ -77,7 +77,9 @@ class HealthReport:
 class Reporter:
 
     def __init__(self, name: str = None):
-
+        """
+        name: name of the health report (optional)
+        """
         self.jetpack = "/opt/cycle/jetpack/bin/jetpack"
         self.store = {}
         if name:
@@ -96,6 +98,13 @@ class Reporter:
         for name, report in self.store.items():
             response[name] = report.view()
         return response
+
+    async def clear_all_errors(self):
+
+        report = HealthReport()
+        for key in self.store:
+            log.debug(f"Clearing previous error report for {key}")
+            await self.update_report(name=key, report=report)
 
     async def update_report(self, name: str, report: HealthReport):
 

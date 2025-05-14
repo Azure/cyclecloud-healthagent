@@ -13,15 +13,17 @@ log = logging.getLogger('healthagent')
 class SystemdMonitor:
 
 
-    def __init__(self):
+    def __init__(self, reporter: Reporter):
         self.state = dict()
         self.bus = None
         self.manager = None
         self.unit_paths = set()
-        self.reporter = Reporter()
+        self.reporter = reporter
 
 
     async def create(self):
+
+        await self.reporter.clear_all_errors()
         # Get systemd manager
         self.bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         systemd_obj = await self.bus.introspect("org.freedesktop.systemd1", "/org/freedesktop/systemd1")

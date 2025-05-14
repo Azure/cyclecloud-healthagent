@@ -2,9 +2,11 @@
 import asyncio
 import json
 import logging
+import pickle
 import os
 import socket
 from healthagent.AsyncScheduler import AsyncScheduler
+from healthagent.reporter import Reporter
 
 log = logging.getLogger('healthagent')
 
@@ -21,6 +23,34 @@ class Healthagent:
     socket = f"{rundir}/health.sock"
     server = None
     modules = {}
+
+    @classmethod
+    def get_module_file(self, module: str):
+
+        return f"{self.rundir}/{module}.pkl"
+
+    @classmethod
+    def get_reporter(self, module: str):
+        filename = self.get_module_file(module=module)
+        if os.path.exists(filename):
+            try:
+                with open(filename, 'rb') as f:
+                    return pickle.load(f)
+            except Exception as e:
+                log.error(e)
+                log.error(f"Unable to restore previous state for module {module}")
+        return Reporter()
+
+    @classmethod
+    def save_reporter(self):
+        for module, obj  in self.modules.items():
+            reporter = obj.reporter
+            filename = self.get_module_file(module=module)
+            try:
+                with open(filename, 'wb') as f:
+                    pickle.dump(reporter, f)
+            except Exception as e:
+                log.exception(e)
 
     @classmethod
     async def _execute_module_functions(self, attribute_flag: str, is_async: bool = True):
@@ -100,8 +130,10 @@ class Healthagent:
             log.error("Skipping GPU health checks")
         else:
             try:
-                gpu = GpuHealthChecks()
-                self.modules['gpu'] = gpu
+                module = "gpu"
+                reporter = self.get_reporter(module=module)
+                gpu = GpuHealthChecks(reporter=reporter)
+                self.modules[module] = gpu
                 await gpu.create()
             except GpuNotFoundException as e:
                 log.debug(e)
@@ -110,8 +142,10 @@ class Healthagent:
 
         try:
             from healthagent.async_systemd import SystemdMonitor
-            systemd = SystemdMonitor()
-            self.modules['systemd'] = systemd
+            module = "systemd"
+            reporter = self.get_reporter(module=module)
+            systemd = SystemdMonitor(reporter=reporter)
+            self.modules[module] = systemd
             await systemd.create()
             #TODO: Future work
             # Right now list of services are hardcoded, and any service not loaded on a node is automatically ignored.
@@ -135,6 +169,7 @@ class Healthagent:
         log.info("Initialized HealthAgent")
         await AsyncScheduler.stop_event.wait()
         await self.stop_server()
+        self.save_reporter()
         log.info("Exiting")
 
     @classmethod

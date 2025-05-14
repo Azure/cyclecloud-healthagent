@@ -20,12 +20,12 @@ class GpuNotFoundException(Exception):
     pass
 class GpuHealthChecks:
 
-    def __init__(self):
-
+    def __init__(self, reporter: Reporter):
 
         self.dcgmGroup = None
         self.dcgmHandle = None
 
+        self.reporter = reporter
         self.policy = None
         self.policy_fields = []
         self.watch_fields = []
@@ -73,7 +73,6 @@ class GpuHealthChecks:
         self.__display_gpu_config()
         self.setup_dcgm_policy()
         self.setup_background_watches()
-        self.reporter = Reporter()
         log.debug("Initialized GPU Healthchecks")
 
     def setup_dcgm_policy(self):
@@ -165,6 +164,7 @@ class GpuHealthChecks:
             log.debug("Compute Mode: %s" % (self.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
     async def create(self):
+        await self.reporter.clear_all_errors()
         log.debug("Adding periodic background healthchecks")
         await AsyncScheduler.add_periodic_task(time(), 60, Priority.HARDWARE_CHECKS_POLL, self.run_background_healthchecks)
 
