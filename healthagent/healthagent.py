@@ -5,8 +5,6 @@ import logging
 import os
 import socket
 from healthagent.AsyncScheduler import AsyncScheduler
-from healthagent.gpu import GpuHealthChecks,GpuHealthChecksException,GpuNotFoundException
-from healthagent.async_systemd import SystemdMonitor
 
 log = logging.getLogger('healthagent')
 
@@ -96,15 +94,22 @@ class Healthagent:
     @classmethod
     async def initialize_modules(self):
         try:
-            gpu = GpuHealthChecks()
-            self.modules['gpu'] = gpu
-            await gpu.create()
-        except GpuNotFoundException as e:
-            log.debug(e)
-        except Exception as e:
-            log.exception(e)
+            from healthagent.gpu import GpuHealthChecks,GpuNotFoundException
+        except ImportError as e:
+            log.error("Unable to find dcgm python binding, is DCGM 4 installed?")
+            log.error("Skipping GPU health checks")
+        else:
+            try:
+                gpu = GpuHealthChecks()
+                self.modules['gpu'] = gpu
+                await gpu.create()
+            except GpuNotFoundException as e:
+                log.debug(e)
+            except Exception as e:
+                log.exception(e)
 
         try:
+            from healthagent.async_systemd import SystemdMonitor
             systemd = SystemdMonitor()
             self.modules['systemd'] = systemd
             await systemd.create()
