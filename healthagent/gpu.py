@@ -483,31 +483,29 @@ class GpuHealthChecks:
                raise(e)
             else:
                 log.error(str(e))
-        tests = response.tests[:min(response.numTests, dcgm_structs.DCGM_DIAG_RESPONSE_TESTS_MAX)]
-        errors = response.errors[:min(response.numErrors, dcgm_structs.DCGM_DIAG_RESPONSE_ERRORS_MAX)]
-        #entities = response.entities[:min(response.numEntities, dcgm_structs.DCGM_DIAG_RESPONSE_ENTITIES_MAX)]
-        info = response.info[:min(response.numInfo, dcgm_structs.DCGM_DIAG_RESPONSE_INFO_MAX)]
-        #results = response.results[:min(response.numResults, dcgm_structs.DCGM_DIAG_RESPONSE_RESULTS_MAX)]
-        categories = response.categories[:min(response.numCategories, dcgm_structs.DCGM_DIAG_RESPONSE_CATEGORIES_MAX)]
-
         test_types = set()
         failures = list()
-        for test in tests:
-            log.debug("%s" % test.name)
-            info_msgs = map(lambda infoidx: info[infoidx], test.infoIndices[:min(test.numInfo, dcgm_structs.DCGM_DIAG_TEST_RUN_INFO_INDICES_MAX)])
-            for msgs in info_msgs:
-                log.debug(f"test: {test.name}, info msg: {msgs}")
-            if self.dcgm_diag_test_didnt_pass(test.result):
-                isHealthy = False
-                testErrors = map(lambda errIdx: errors[errIdx], test.errorIndices[:min(test.numErrors, dcgm_structs.DCGM_DIAG_TEST_RUN_ERROR_INDICES_MAX)])
-                test_category = response.categories[test.categoryIndex].value.decode()
-                log.debug("%s" % test_category)
-                test_types.add(f"{test.name}-{test_category}")
-                for err in testErrors:
-                    if err.entity.entityGroupId == dcgm_fields.DCGM_FE_GPU:
-                        failures.append(f"GPU {err.entity.entityId}: {err.msg}")
-                    elif err.entity.entityGroupId == dcgm_fields.DCGM_FE_NONE and err.entity.entityId == 0:
-                        failures.append(f"{err.msg}")
+        if response.numErrors > 0:
+            isHealthy = False
+            for errIdx in range(response.numErrors):
+                curErr = response.errors[errIdx]
+                error_msg = curErr.msg
+                if curErr.testId == dcgm_structs.DCGM_DIAG_RESPONSE_SYSTEM_ERROR:
+                    testName = "System"
+                    failures.append(f"System Error: {error_msg}")
+                    test_types.add(testName)
+                elif curErr.entity.entityGroupId == dcgm_fields.DCGM_FE_GPU:
+                    testName = response.tests[curErr.testId].name
+                    gpuId = curErr.entity.entityId
+                    failures.append(f"GPU: {gpuId}, Test name: {testName}, Error: {error_msg}")
+                    test_types.add(testName)
+                else:
+                    failures.append(f"Test name: {testName}, Error: {error_msg}")
+        if response.numInfo > 0:
+            for i in range(response.numInfo):
+                info = response.info[i]
+                testName = response.tests[info.testId].name
+                log.debug(f"Test: {testName}, Info: {info.msg}")
 
         if not isHealthy:
             custom_fields['failures'] = test_types
@@ -519,9 +517,6 @@ class GpuHealthChecks:
             report.custom_fields = custom_fields
         await self.reporter.update_report(name=health_system, report=report)
         return report.view()
-
-
-
 
     async def run_active_healthchecks(self):
         """
