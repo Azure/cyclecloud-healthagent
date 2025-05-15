@@ -4,8 +4,9 @@ import json
 import logging
 import pickle
 import os
-import socket
-from healthagent.AsyncScheduler import AsyncScheduler
+import signal
+from time import perf_counter
+from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
 
 log = logging.getLogger('healthagent')
@@ -23,6 +24,19 @@ class Healthagent:
     socket = f"{rundir}/health.sock"
     server = None
     modules = {}
+
+    @classmethod
+    def handler(self, signum, frame):
+
+        if os.getpid() == self.pid:
+            signame = signal.Signals(signum).name
+            log.critical(f'Signal Received {signame} ({signum})')
+            Scheduler.stop()
+        else:
+            # Re-raise the signal to allow the default signal handling behavior (process termination)
+            if signum == 15:
+                log.debug(f"Child process {os.getpid()} re-raising signal {signum}")
+                signal.default_int_handler(signum, frame)
 
     @classmethod
     def get_module_file(self, module: str):
@@ -114,12 +128,15 @@ class Healthagent:
     @classmethod
     async def stop_server(self):
 
+        log.debug("Stopping the server")
+        start = perf_counter()
         if self.server:
             self.server.close()
             await self.server.wait_closed()
         if os.path.exists(self.socket):
             os.remove(self.socket)
-        log.debug("Finished closing the server")
+        end = perf_counter()
+        log.debug(f"Finished closing the server, took: {end - start:.4f} sec")
 
     @classmethod
     async def initialize_modules(self):
@@ -157,6 +174,14 @@ class Healthagent:
     @classmethod
     async def run(self):
 
+        self.pid = os.getpid()
+        log.debug(f"Healthagent pid: {self.pid}")
+        loop = asyncio.get_running_loop()
+        loop.add_signal_handler(signal.SIGINT, lambda: self.handler(signal.SIGINT, None))
+        loop.add_signal_handler(signal.SIGTERM, lambda: self.handler(signal.SIGTERM, None))
+        #signal.signal(signalnum=signal.SIGTERM, handler=self.handler)
+        #signal.signal(signalnum=signal.SIGINT, handler=self.handler)
+        Scheduler.start()
         if not os.path.isdir(self.workdir):
             raise ValueError(f"Invalid workdir: {self.workdir}")
         if not os.access(self.workdir, os.W_OK):
@@ -164,15 +189,9 @@ class Healthagent:
         os.makedirs(self.rundir, exist_ok=True)
 
         await self.initialize_modules()
-        await AsyncScheduler.start()
         await self.run_unix_server()
         log.info("Initialized HealthAgent")
-        await AsyncScheduler.stop_event.wait()
+        await Scheduler.stop_event.wait()
         await self.stop_server()
         self.save_reporter()
         log.info("Exiting")
-
-    @classmethod
-    def stop(self):
-
-        AsyncScheduler.stop()

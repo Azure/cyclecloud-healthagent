@@ -6,7 +6,7 @@ import logging
 import systemd.journal
 from time import time
 from healthagent import status
-from healthagent.AsyncScheduler import AsyncScheduler,Priority
+from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter,HealthReport,HealthStatus
 
 log = logging.getLogger('healthagent')
@@ -88,7 +88,7 @@ class SystemdMonitor:
 
 
             if active_state in ["failed", "active", "inactive"]:
-                await AsyncScheduler.add_task(time(), Priority.SOFTWARE_EVENT_CALLBACK, self.set_current_state, service_name, active_state, substate)
+                Scheduler.add_task(self.set_current_state, service_name, active_state, substate)
 
         return handle_properties_changed
 

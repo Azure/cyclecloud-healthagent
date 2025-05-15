@@ -7,7 +7,7 @@ import datetime
 from time import time
 from typing import Any,Dict
 import logging
-from healthagent.AsyncScheduler import AsyncScheduler,Priority
+from healthagent.scheduler import Scheduler
 
 log = logging.getLogger('healthagent')
 
@@ -149,4 +149,5 @@ class Reporter:
                 args.extend(['--details', report.details])
 
         # Schedule the subprocess task
-        await AsyncScheduler.add_subprocess_task(time(), Priority.GENERAL, *args)
+        task = Scheduler.subprocess(*args)
+        await Scheduler.add_task(task)
