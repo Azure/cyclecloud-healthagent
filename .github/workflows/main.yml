@@ -1,0 +1,29 @@
+name: Package and Release
+
+on:
+  push:
+    branches:
+      - 'release/**'
+    tags:
+      - 'v*'  # Triggers on version tags like v1.0.0
+
+jobs:
+  package-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Make package.sh executable
+        run: chmod +x ./package.sh
+
+      - name: Run packaging script
+        run: ./package.sh
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            blobs/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
