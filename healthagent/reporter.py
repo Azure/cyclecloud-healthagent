@@ -1,7 +1,5 @@
-import subprocess
 import copy
 from enum import Enum
-from collections import deque
 from dataclasses import dataclass, asdict, is_dataclass
 import datetime
 from time import time
@@ -17,7 +15,7 @@ def make_json_safe(obj):
     elif isinstance(obj, Enum):
         return obj.value
     elif isinstance(obj, datetime.datetime):
-        return obj.isoformat()
+        return obj.strftime("%Y-%m-%dT%H:%M:%S %Z")
     elif isinstance(obj, set):
         return list(obj)
     elif isinstance(obj, dict):
@@ -50,8 +48,19 @@ class HealthReport:
     details: str = None
     "recommended actions"
     recommendations :str = None
+    "Last run Timestamp"
+    last_update: datetime = None
     "custom module specific data"
     custom_fields: Dict[str, Any] = None
+
+    def __eq__(self, other):
+        if not isinstance(other, HealthReport):
+            return NotImplemented
+        d1 = asdict(self)
+        d2 = asdict(other)
+        d1.pop('last_update', None)
+        d2.pop('last_update', None)
+        return d1 == d2
 
     def __post_init__(self):
         if self.custom_fields is None:
@@ -125,11 +134,15 @@ class Reporter:
         if report.status in default_messages and not report.message:
             report.message = default_messages[report.status]
 
-
+        # Always update the last_update before comparison
+        report.last_update = datetime.datetime.now(datetime.timezone.utc)
         last_report = self.store.get(name)
         if not last_report or (asdict(last_report) != asdict(report)):
             self.store[name] = report
             await self._report_health_status(name)
+        else:
+            # still update the last_update
+            self.store[name].last_update = report.last_update
 
     async def _report_health_status(self, name):
 
