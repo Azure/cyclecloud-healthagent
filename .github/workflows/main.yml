@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - 'release/**'
-    tags:
-      - 'v*'  # Triggers on version tags like v1.0.0
 
 jobs:
   package-and-release:
