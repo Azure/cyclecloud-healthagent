@@ -44,7 +44,7 @@ class Scheduler:
         # Don't re-schedule periodic task if cancellation event is set
         elif interval > 0:
             loop = asyncio.get_running_loop()
-            loop.call_later(interval, self.add_task, function, *args, **kwargs)
+            loop.call_later(interval, self.add_task, function, *args)
 
         return out
 
@@ -59,7 +59,7 @@ class Scheduler:
         that need not repeat and only runs once.
         Usually run with a higher priority (lower priority number means high priority).
         """
-        if self.stop_event.is_set():
+        if not self.stop_event or self.stop_event.is_set():
             return None
         interval = getattr(function, "interval", -1)
         pool = getattr(function, "pool", False)
@@ -67,7 +67,7 @@ class Scheduler:
             return asyncio.create_task(self.__task_wrapper(interval, function, *args, **kwargs))
         else:
             loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(self._pool, function)
+            fut = loop.run_in_executor(self._pool, function, *args)
             return fut
 
     def subprocess(*sp_args, **sp_kwargs):
@@ -103,4 +103,4 @@ class Scheduler:
                 process.terminate()
 
             self._pool.shutdown(wait=False)
-            print("Shut down process pool")
+            log.debug("Shut down process pool")

@@ -5,7 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "healthagent"
 version = "1.0.1"
-dependencies = ["dbus-next", "systemd-python"]
+dependencies = ["dbus-next", "systemd-python", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [project.scripts]
 healthagent = "healthagent.main:main"
