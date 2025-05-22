@@ -8,6 +8,12 @@ import signal
 from time import perf_counter
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("your-package-name")
+except PackageNotFoundError:
+    __version__ = "unknown"
 
 log = logging.getLogger('healthagent')
 
@@ -123,7 +129,7 @@ class Healthagent:
 
         self.server = await asyncio.start_unix_server(self.handle_client, path=self.socket)
         os.chmod(self.socket, 0o660)
-        log.info(f"listening on {self.socket}")
+        log.debug(f"listening on {self.socket}")
 
     @classmethod
     async def stop_server(self):
@@ -175,7 +181,7 @@ class Healthagent:
     async def run(self):
 
         self.pid = os.getpid()
-        log.debug(f"Healthagent pid: {self.pid}")
+        log.info(f"Healthagent pid: {self.pid}")
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, lambda: self.handler(signal.SIGINT, None))
         loop.add_signal_handler(signal.SIGTERM, lambda: self.handler(signal.SIGTERM, None))
