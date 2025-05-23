@@ -46,12 +46,23 @@ def get_response(command, timeout):
         return None
 
 def print_bash_friendly(result):
-    pass
 
-def run_command(command, timeout):
+    res = {}
+    for module_name, checks in result.items():
+        total_errors = sum(
+            check.get('error_count', 1)
+            for check in checks.values()
+            if check.get('status') == 'Error'
+        )
+        res[module_name] = total_errors
+    return [print(f"{x},{y}") for x,y in res.items()]
+
+def run_command(command, timeout, bash=False):
     response = get_response(command=command, timeout=timeout)
     if not response:
         sys.exit(-1)
+    if bash:
+        return print_bash_friendly(response)
     print(json.dumps(response, indent=4))
 
 def main():
@@ -95,7 +106,7 @@ def main():
     elif args.prolog:
         pass
     elif args.status:
-        run_command(command="status", timeout=30)
+        run_command(command="status", timeout=30, bash=args.bash)
     else:
         parser.print_help()
 

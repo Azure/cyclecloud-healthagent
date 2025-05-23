@@ -1,0 +1,34 @@
+#!/bin/bash
+# Example SlurmHealthCheck Program that can be used to drain/un-drain nodes based on health status from healthagent.
+# /usr/bin/health is the client program used to get health status from healthagent.
+# If the node is drained with a different reason, this program will not update its reason field.
+# If the node reason field contains "healthcheck failures" and the node reports healthy status again, it will be resumed.
+get_gpu_errors() {
+    local input="$1"
+    echo "$input" | awk -F',' '$1 == "gpu" { print $2 }'
+}
+
+manage_node_state() {
+    local node
+    local state
+    local reason
+    local errors
+    errors=$1
+    node=$(/bin/hostname -s)
+    read -r state reason < <(sinfo -N -n "$node" -o "%T|%E" -h | awk -F'|' '{print $1, $2}')
+
+    if [[ "$state" == "idle" ]] && [[ $errors -ge 1 ]]; then
+        echo "Draining node $node with reason 'healthcheck failures'..."
+        /usr/bin/scontrol update NodeName="$node" State=drain Reason="Healthcheck failures. Run 'health -s' view health report."
+    elif [[ "$state" =~ ^drain(ed)?$ ]] && [[ "$reason" == "healthcheck failures" ]] && [[ $errors -eq 0 ]]; then
+        echo "Node $node is drained for reason '$reason' — resetting to resume."
+        /usr/bin/scontrol update NodeName="$node" State=resume
+    else
+        echo "Node $node is in state '$state' with reason '$reason'. No action taken."
+    fi
+}
+
+
+output=$(/usr/bin/health -b)
+errors=$(get_gpu_errors "$output")
+manage_node_state "$errors"
