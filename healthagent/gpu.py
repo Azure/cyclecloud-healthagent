@@ -91,6 +91,15 @@ class GpuHealthChecks:
 
     async def create(self):
         await self.reporter.clear_all_errors()
+        # set persistence mode on GPU's
+        args = ["/usr/bin/nvidia-persistenced", "-u", "root"]
+        task = Scheduler.subprocess(*args)
+        out = await Scheduler.add_task(task)
+        stdout, stderr = await out.communicate()
+        log.debug(stdout)
+        log.error(stderr)
+        if out.returncode != 0:
+            log.error("Unable to set persistent mode on GPUs")
         log.debug("Adding periodic background healthchecks")
         Scheduler.add_task(self.run_background_healthchecks)
 
@@ -182,10 +191,12 @@ class GpuHealthChecks:
 
     @epilog
     async def run_epilog(self):
-        health_system = f"ActiveDCGMHealthChecks"
+        health_system = f"ActiveGPUHealthChecks"
         report = await Scheduler.add_task(run_active_healthchecksv2)
         await self.reporter.update_report(name=health_system, report=report)
-        return report.view()
+        response = {}
+        response[health_system] = report.view()
+        return response
 
     @Scheduler.periodic(60)
     async def run_background_healthchecks(self):
@@ -274,25 +285,26 @@ def run_active_healthchecksv2():
     report = HealthReport()
     custom_fields = {}
 
+    failures = list()
+    info_msgs = list()
     try:
         dcgmGroup, dcgmHandle = Wrap.connect(grp_name="epilog")
         response = dcgmGroup.action.RunDiagnostic(DIAG_LEVEL)
     except Wrap.DcgmConnectionFail as e:
-        log.critical("Could not connect to DCGM, is nvidia-dcgm service running?")
+        failures.append("Could not connect to DCGM, is nvidia-dcgm service running?")
         report = HealthReport(status=HealthStatus.WARNING, description="Test not performed",
                               details="Active diagnostics not performed.\nIs nvidia-dcgm service running?")
         return report
     except dcgmExceptionClass(dcgm_structs.DCGM_ST_NOT_CONFIGURED):
-        log.error("One of the GPUs on your system is not supported by NVVS")
+        failures.append("One of the GPUs on your system is not supported by NVVS")
     except dcgmExceptionClass(dcgm_structs.DCGM_ST_GROUP_INCOMPATIBLE):
-        log.error("GPUs in the group are not compatible with each other for running diagnostics")
+        failures.append("GPUs in the group are not compatible with each other for running diagnostics")
     except dcgmExceptionClass(dcgm_structs.DCGM_ST_NVVS_ERROR) as e:
         if not Wrap.should_ignore_error(e):
             raise(e)
         else:
-            log.error(str(e))
+            failures.append(str(e))
     test_types = set()
-    failures = list()
     if response.numErrors > 0:
         isHealthy = False
         for errIdx in range(response.numErrors):
@@ -313,11 +325,12 @@ def run_active_healthchecksv2():
         for i in range(response.numInfo):
             info = response.info[i]
             testName = response.tests[info.testId].name
-            log.debug(f"Test: {testName}, Info: {info.msg}")
+            info_msgs.append(f"Test: {testName}, Info: {info.msg}")
 
     if not isHealthy:
         custom_fields['failures'] = test_types
         custom_fields['error_count'] = len(failures)
+        custom_fields['info'] = info_msgs
         report.status = HealthStatus.ERROR
         report.details = "\n".join(failures)
         report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
