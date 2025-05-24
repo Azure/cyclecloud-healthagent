@@ -47,7 +47,7 @@ ssh -o StrictHostKeyChecking=no "$REMOTE" <<EOF
     set -e
     sudo mv /tmp/$PACKAGE $REMOTE_DIR/$PACKAGE
     echo "Activating virtual environment..."
-    sudo bash -c "source $VENV_DIR/bin/activate && pip install --force-reinstall $REMOTE_DIR/$PACKAGE"
+    sudo bash -c "source $VENV_DIR/bin/activate && pip install --force-reinstall $REMOTE_DIR/$PACKAGE && healthagent-install"
 EOF
 
 if [ $? -eq 0 ]; then

@@ -96,9 +96,9 @@ class GpuHealthChecks:
         task = Scheduler.subprocess(*args)
         out = await Scheduler.add_task(task)
         stdout, stderr = await out.communicate()
-        log.debug(stdout)
-        log.error(stderr)
         if out.returncode != 0:
+            log.debug(stdout)
+            log.error(stderr)
             log.error("Unable to set persistent mode on GPUs")
         log.debug("Adding periodic background healthchecks")
         Scheduler.add_task(self.run_background_healthchecks)

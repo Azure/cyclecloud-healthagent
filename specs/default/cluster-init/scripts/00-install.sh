@@ -71,7 +71,7 @@ download_install_healthagent() {
     source $VENV_DIR/bin/activate
     pip install --force-reinstall $PACKAGE
     # Copy the "health" script to /usr/bin
-    cp $(which health) /usr/bin/
+    healthagent_install
     deactivate
 }
 setup_dcgm() {
