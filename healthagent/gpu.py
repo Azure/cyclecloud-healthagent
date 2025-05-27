@@ -265,10 +265,10 @@ class GpuHealthChecks:
 
     def __del__(self):
         ## Delete the group
-        if self.dcgmGroup:
+        if hasattr(self, 'dcgmGroup') and self.dcgmGroup:
             self.dcgmGroup.Delete()
 
-        if self.dcgmHandle:
+        if hasattr(self, 'dcgmHandle') and self.dcgmHandle:
             ## disconnect from the hostengine by deleting the DcgmHandle object
             del(self.dcgmHandle)
 
