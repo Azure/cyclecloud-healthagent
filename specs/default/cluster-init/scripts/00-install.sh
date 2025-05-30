@@ -1,5 +1,5 @@
 #!/bin/bash
-set +x
+set -x
 set -e
 
 # Cluster-Init (v1) script to setup healthagent
@@ -40,8 +40,11 @@ setup_venv() {
         apt install -y libsystemd-dev
         PYTHON_BIN="/usr/bin/python3.11"
     elif [ "$OS" == "ubuntu" ] && [[ $VERSION =~ ^24\.* ]]; then
+        echo "Detected Ubuntu 24. Installing Python 3.12..."
+        apt update
         apt install -y python3.12 python3.12-venv python3.12-dev
         apt install -y libsystemd-dev
+        PYTHON_BIN="/usr/bin/python3.12"
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
         # dont exit 0
