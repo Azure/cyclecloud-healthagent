@@ -13,6 +13,8 @@ DCGM_VERSION="4.2.3"
 
 
 setup_venv() {
+    set -x
+
     if [ -f /etc/os-release ]; then
         . /etc/os-release
         OS=$ID
@@ -61,6 +63,9 @@ setup_venv() {
 }
 
 download_install_healthagent() {
+
+    set -x
+
     cd $HEALTHAGENT_DIR
     # Check if the package already exists and delete it if it does
     if [ -f "$PACKAGE" ]; then
@@ -78,6 +83,8 @@ download_install_healthagent() {
     deactivate
 }
 setup_dcgm() {
+    set -x
+
     echo "Setting up DCGM (Datacenter GPU Manager)..."
 
     # Detect the operating system
@@ -135,6 +142,8 @@ setup_dcgm() {
 }
 
 setup_systemd() {
+    set -x
+
     # Create the systemd service file
     echo "Creating systemd service file at $SERVICE_FILE..."
     cat <<EOL > $SERVICE_FILE

@@ -19,6 +19,7 @@ class SystemdMonitor:
         self.manager = None
         self.unit_paths = set()
         self.reporter = reporter
+        self.services_not_enabled = list()
 
 
     async def create(self):
@@ -29,7 +30,39 @@ class SystemdMonitor:
         systemd_obj = await self.bus.introspect("org.freedesktop.systemd1", "/org/freedesktop/systemd1")
         systemd_iface = self.bus.get_proxy_object("org.freedesktop.systemd1", "/org/freedesktop/systemd1", systemd_obj)
         self.manager = systemd_iface.get_interface("org.freedesktop.systemd1.Manager")
+        # Add event listener for new units
+        self.manager.on_unit_new(self.handle_unit_new)
 
+    async def __add_handler(self, unit_name, service):
+
+        introspect = await self.bus.introspect("org.freedesktop.systemd1", unit_name)
+        unit_obj = self.bus.get_proxy_object("org.freedesktop.systemd1", unit_name, introspect)
+        properties_iface = unit_obj.get_interface("org.freedesktop.DBus.Properties")
+        # Do an initial check to set the state of the service. Useful if the service to monitor is already in failed state.
+        curr_active_state = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'ActiveState')
+        curr_substate = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'SubState')
+        await self.set_current_state(service=service, active_state=curr_active_state.value, substate=curr_substate.value)
+        callback = self.create_callback(unit=unit_name, service_name=service)
+        # Set on_properties_changed callback to allow dbus to run our callback if there is any change in the state of the service.
+        properties_iface.on_properties_changed(callback)
+        log.debug(f"Monitoring '{unit_name}'")
+
+    async def handle_unit_new(self, service, unit_name):
+        """
+        Called when a new unit is loaded by systemd.
+        If the unit matches a service in our monitor list, add a monitor for it.
+        """
+        # id is the unit name, e.g., "myservice.service"
+        # unit_path is the object path
+        # Check if this unit is in the list of services to monitor
+        if service in self.services_not_enabled:
+            # Avoid duplicate monitoring
+            if unit_name not in self.unit_paths:
+                self.unit_paths.add(unit_name)
+                try:
+                    await self.__add_handler(unit_name=unit_name, service=service)
+                except Exception as e:
+                    log.error(e)
     def get_journal_entries(self, service_name):
         """Prints the last `num_entries` lines of journal logs for a given systemd service."""
         num_entries = 10
@@ -109,23 +142,14 @@ class SystemdMonitor:
                     # we already monitoring it, ignore
                     continue
                 self.unit_paths.add(unit_name)
-                introspect = await self.bus.introspect("org.freedesktop.systemd1", unit_name)
-                unit_obj = self.bus.get_proxy_object("org.freedesktop.systemd1", unit_name, introspect)
-                properties_iface = unit_obj.get_interface("org.freedesktop.DBus.Properties")
-                # Do an initial check to set the state of the service. Useful if the service to monitor is already in failed state.
-                curr_active_state = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'ActiveState')
-                curr_substate = await properties_iface.call_get('org.freedesktop.systemd1.Unit', 'SubState')
-                await self.set_current_state(service=service, active_state=curr_active_state.value, substate=curr_substate.value)
-                callback = self.create_callback(unit=unit_name, service_name=service)
-                # Set on_properties_changed callback to allow dbus to run our callback if there is any change in the state of the service.
-                properties_iface.on_properties_changed(callback)
-                log.debug(f"Monitoring '{unit_name}'")
+                await self.__add_handler(unit_name=unit_name, service=service)
             except DBusError as e:
                 #TODO: Fix this.
                 #This can be logged as an exception/error without trapping this specific exception once we remove the hardcoded list of services.
                 if e.type == "org.freedesktop.systemd1.NoSuchUnit":
                     log.debug(f"Could not find service '{service}': {e}")
                     log.debug(f"Ignoring service {service} for monitoring")
+                    self.services_not_enabled.append(service)
                 else:
                     log.exception(e)
                     raise
