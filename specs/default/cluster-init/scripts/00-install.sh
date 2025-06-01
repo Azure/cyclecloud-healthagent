@@ -159,6 +159,7 @@ ExecStart=$VENV_DIR/bin/python3 $VENV_DIR/bin/healthagent
 Restart=always
 User=root
 Group=root
+WatchdogSec=600s
 
 [Install]
 WantedBy=multi-user.target
