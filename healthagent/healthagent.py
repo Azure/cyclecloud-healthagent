@@ -177,6 +177,13 @@ class Healthagent:
         except Exception as e:
             log.exception(e)
 
+    @Scheduler.periodic(60)
+    async def reset_systemd_watchdog(self):
+        '''Periodically notify (aka "pet") the systemd watchdog to indicate healthagent service liveness'''
+        from systemd.daemon import notify
+        notify("WATCHDOG=1")
+
+
     @classmethod
     async def run(self):
 
@@ -193,6 +200,9 @@ class Healthagent:
         if not os.access(self.workdir, os.W_OK):
             raise PermissionError(f"Workdir is not writable: {self.workdir}")
         os.makedirs(self.rundir, exist_ok=True)
+
+        # Periodically indicate liveness to systemd watchdog  (service will be restarted if it misses enough checks)
+        Scheduler.add_task(self.reset_systemd_watchdog)
 
         await self.initialize_modules()
         await self.run_unix_server()
