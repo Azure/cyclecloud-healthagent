@@ -56,7 +56,8 @@ class GpuHealthChecks:
         Add required fields for tracking.
         """
 
-        policy = Wrap.set_policy(temperature=85, mpe=8, power=int(0.9 * (self.gpu_config[0].mPowerLimit.val)))
+        # TODO: These limits will come from a configuration file eventually.
+        policy = Wrap.set_policy(temperature=90, mpe=8, power=self.gpu_config[0].mPowerLimit.val)
         self.dcgmGroup.policy.Set(policy)
         self.c_callback = create_c_callback(self.handle_policy_violation, asyncio.get_running_loop())
         self.dcgmGroup.policy.Register(policy.condition, self.c_callback, None)
@@ -129,6 +130,7 @@ class GpuHealthChecks:
             vd[gpuid] = {}
 
         info = vd[gpuid]
+        status = HealthStatus.ERROR
         if condition == dcgm_structs.DCGM_POLICY_COND_DBE:
             if 'location' not in info:
                 info['location'] = set()
@@ -150,9 +152,11 @@ class GpuHealthChecks:
             info['xid_error'].add(callbackresp.val.xid.errnum)
             info['details'] = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
+            status = HealthStatus.WARNING
             info['temperature'] = callbackresp.val.thermal.thermalViolation
             info['details'] = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
+            status = HealthStatus.WARNING
             info['power'] = callbackresp.val.power.powerViolation
             info['details'] = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
@@ -163,7 +167,7 @@ class GpuHealthChecks:
         vd[gpuid] = info
         report.custom_fields[condition_str] = vd
 
-        report.status = HealthStatus.ERROR
+        report.status = status
         report.description = "GPU Policy Violations detected"
         if not report.details:
             report.details = info['details']
