@@ -324,7 +324,7 @@ def run_active_healthchecksv2():
                 failures.append(f"GPU: {gpuId}, Test name: {testName}, Error: {error_msg}")
                 test_types.add(testName)
             else:
-                failures.append(f"Test name: {testName}, Error: {error_msg}")
+                failures.append(f"Error: {error_msg}")
     if response.numInfo > 0:
         for i in range(response.numInfo):
             info = response.info[i]
