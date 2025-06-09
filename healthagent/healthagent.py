@@ -180,6 +180,16 @@ class Healthagent:
         except Exception as e:
             log.exception(e)
 
+        try: 
+            from healthagent.kmsg import KmsgReader
+            module = 'kmsg'
+            reporter = self.get_reporter(module=module)
+            kmsg_reader = KmsgReader(reporter=reporter)
+            self.modules[module] = kmsg_reader
+        except Exception as e:
+            log.exception(e)
+            log.error("kmsg module disabled")
+
     @classmethod
     async def run(self):
 
