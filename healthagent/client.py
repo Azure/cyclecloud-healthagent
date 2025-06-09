@@ -80,6 +80,9 @@ def main():
     group.add_argument(
         "-s", "--status", action="store_true", help="Get the current health status of the node"
     )
+    group.add_argument(
+        "-v", "--version", action="store_true", help="Return Healthagent version"
+    )
 
     parser.add_argument("-b", "--bash", action="store_true", default=False, help="Export results into bash friendly variables")
     #parser.add_argument(
@@ -98,7 +101,7 @@ def main():
         #level=getattr(logging, log_level, logging.ERROR)
         )
 
-    if not (args.epilog or args.prolog or args.status):
+    if not (args.epilog or args.prolog or args.version):
         args.status = True
     # Handle arguments
     if args.epilog:
@@ -107,6 +110,8 @@ def main():
         pass
     elif args.status:
         run_command(command="status", timeout=30, bash=args.bash)
+    elif args.version:
+        run_command(command="version", timeout=5)
     else:
         parser.print_help()
 

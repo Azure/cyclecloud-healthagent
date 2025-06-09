@@ -11,9 +11,9 @@ from healthagent.reporter import Reporter
 from importlib.metadata import version, PackageNotFoundError
 
 try:
-    __version__ = version("your-package-name")
+    VERSION = version("healthagent")
 except PackageNotFoundError:
-    __version__ = "unknown"
+    VERSION = "unknown"
 
 log = logging.getLogger('healthagent')
 
@@ -112,6 +112,9 @@ class Healthagent:
                 log.debug("Received status request")
                 response = await self._execute_module_functions(attribute_flag="status", is_async=False)
                 log.debug(f"status response: {response}")
+            elif message == "version":
+                response = VERSION
+                log.debug(f"version response: {response}")
             else:
                 raise ValueError("Invalid message received")
 
@@ -182,6 +185,7 @@ class Healthagent:
 
         self.pid = os.getpid()
         log.info(f"Healthagent pid: {self.pid}")
+        log.info(f"Healthagent version: {VERSION}")
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, lambda: self.handler(signal.SIGINT, None))
         loop.add_signal_handler(signal.SIGTERM, lambda: self.handler(signal.SIGTERM, None))
