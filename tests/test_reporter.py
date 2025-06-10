@@ -8,13 +8,16 @@ import enum
 def test_healthreport():
 
     ok_report =  HealthReport()
+    ok_report2 = HealthReport()
+    # check equality does not compare timestamps
+    assert ok_report == ok_report2
     assert ok_report.status == HealthStatus.OK
 
     custom_fields = {}
     custom_fields['error_count']=10
     custom_fields['test_type'] = "software"
     custom_fields['test_name'] = ['software', 'gpu']
-    error_report1 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields, last_update=datetime.datetime.now(tz=datetime.timezone.utc))
+    error_report1 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields)
 
     assert error_report1.status == HealthStatus.ERROR
     assert error_report1.error_count == 10
@@ -23,6 +26,7 @@ def test_healthreport():
     error_report2 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields)
     # assert equality does not compare timestamps
     assert error_report1 == error_report2
+
 
 def test_healthreport_obj():
 
@@ -34,7 +38,7 @@ def test_healthreport_obj():
     categories.add('integration')
     categories.add('epilog')
     custom_fields['categories'] = categories
-    error_report1 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields, last_update=datetime.datetime.now(tz=datetime.timezone.utc))
+    error_report1 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields)
 
     try:
         json_safe = make_json_safe(error_report1)
@@ -71,7 +75,7 @@ def test_make_json_safe_with_custom_class_enum_datetime_set():
     class Custom:
         def __init__(self):
             self.color = MyEnum.RED
-            self.timestamp = datetime.datetime(2024, 1, 1, 12, 0, 0, tzinfo=datetime.timezone.utc)
+            self.timestamp = datetime(2024, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
             self.tags = {"foo", "bar"}
 
     obj = Custom()
@@ -86,7 +90,8 @@ async def test_reporter():
 
     my_reporter = Reporter()
     # fetch epilog_test report.
-    report = my_reporter.get_report('epilog_test')
+    name= 'epilog_test'
+    report = my_reporter.get_report(name=name)
     # we never created it
     assert report == None
 
@@ -96,7 +101,7 @@ async def test_reporter():
         mock_add_task.return_value = None  # or an awaitable if needed
 
         report = HealthReport(status=HealthStatus.ERROR, description="epilog failures", details="GPU not available")
-        await my_reporter.update_report("epilog_test",report=report)
+        await my_reporter.update_report(name=name,report=report)
         mock_subprocess.assert_called_once()
         mock_add_task.assert_awaited_once()
 
@@ -104,7 +109,14 @@ async def test_reporter():
         mock_subprocess.reset_mock()
         mock_add_task.reset_mock()
         # send the same report again, and it should not actually send it since nothing changed.
-        await my_reporter.update_report("epilog_test", report=report)
+        await my_reporter.update_report(name=name, report=report)
+        mock_subprocess.assert_not_called()
+        mock_add_task.assert_not_called()
+
+         # Reset mocks before the next call
+        mock_subprocess.reset_mock()
+        mock_add_task.reset_mock()
+        await my_reporter.clear_all_errors(timedelta(hours=1))
         mock_subprocess.assert_not_called()
         mock_add_task.assert_not_called()
 
@@ -113,9 +125,14 @@ async def test_reporter():
         mock_add_task.reset_mock()
         # send an updated report
         ok_report = HealthReport() # defaults to OK
-        await my_reporter.update_report("epilog_test",report=ok_report)
+        await my_reporter.update_report(name, report=ok_report)
         mock_subprocess.assert_called_once()
         mock_add_task.assert_awaited_once()
+
+        await my_reporter.clear_all_errors()
+        mock_subprocess.assert_called_once()
+        mock_add_task.assert_called_once()
+
 
     with patch("healthagent.scheduler.Scheduler.subprocess") as mock_subprocess, \
          patch("healthagent.scheduler.Scheduler.add_task", new_callable=AsyncMock) as mock_add_task:
