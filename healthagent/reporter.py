@@ -1,7 +1,7 @@
 import copy
 from enum import Enum
-from dataclasses import dataclass, asdict, is_dataclass
-import datetime
+from dataclasses import dataclass, asdict, is_dataclass, field
+from datetime import datetime, timedelta, timezone
 from time import time
 from typing import Any,Dict
 import logging
@@ -14,7 +14,7 @@ def make_json_safe(obj):
         return obj
     elif isinstance(obj, Enum):
         return obj.value
-    elif isinstance(obj, datetime.datetime):
+    elif isinstance(obj, datetime):
         return obj.strftime("%Y-%m-%dT%H:%M:%S %Z")
     elif isinstance(obj, set):
         return list(obj)
@@ -48,8 +48,8 @@ class HealthReport:
     details: str = None
     "recommended actions"
     recommendations :str = None
-    "Last run Timestamp"
-    last_update: datetime = None
+    "Last time the report was updated"
+    last_update: datetime = field(init=False)
     "custom module specific data"
     custom_fields: Dict[str, Any] = None
 
@@ -58,6 +58,7 @@ class HealthReport:
             return NotImplemented
         d1 = asdict(self)
         d2 = asdict(other)
+        # remove timestamps before comparing
         d1.pop('last_update', None)
         d2.pop('last_update', None)
         return d1 == d2
@@ -65,6 +66,7 @@ class HealthReport:
     def __post_init__(self):
         if self.custom_fields is None:
             self.custom_fields = {}
+        self.last_update = datetime.now(tz=timezone.utc)
 
     def __getattr__(self, item):
         return self.custom_fields.get(item, None)
@@ -108,12 +110,16 @@ class Reporter:
             response[name] = report.view()
         return response
 
-    async def clear_all_errors(self):
+    async def clear_all_errors(self, delta: timedelta = None):
+        """
+        Clear all errors or all errors before a given delta.
+        """
 
-        report = HealthReport()
-        for key in self.store:
-            log.debug(f"Clearing previous error report for {key}")
-            await self.update_report(name=key, report=report)
+        now = datetime.now(tz=timezone.utc)
+        for name,report in self.store.items():
+            if not delta or now - report.last_update > delta:
+                log.debug(f"Clearing previous error report for {name}")
+                await self.update_report(name=name, report=HealthReport())
 
     async def update_report(self, name: str, report: HealthReport):
 
@@ -135,7 +141,7 @@ class Reporter:
             report.message = default_messages[report.status]
 
         # Always update the last_update before comparison
-        report.last_update = datetime.datetime.now(datetime.timezone.utc)
+        report.last_update = datetime.now(tz=timezone.utc)
         last_report = self.store.get(name)
         if not last_report or (last_report != report):
             self.store[name] = report
