@@ -3,12 +3,12 @@ set -x
 set -e
 
 # Cluster-Init (v1) script to setup healthagent
-VERSION=1.0.2
+HEALTHAGENT_VERSION=1.0.2
 HEALTHAGENT_DIR="/opt/healthagent"
 VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
 SERVICE_FILE="/etc/systemd/system/healthagent.service"
-PACKAGE="healthagent-$VERSION.tar.gz"
+PACKAGE="healthagent-$HEALTHAGENT_VERSION.tar.gz"
 DCGM_VERSION="4.2.3"
 
 
@@ -176,9 +176,33 @@ EOL
 mkdir -p $HEALTHAGENT_DIR
 # Redirect all stdout and stderr to the logfile
 {
+    if [ -f "$HEALTHAGENT_DIR/.install" ]; then
+        # Source the file to load HEALTHAGENT variable
+        source "$HEALTHAGENT_DIR/.install"
+        if [ "$HEALTHAGENT_INSTALLED_VERSION" == "$HEALTHAGENT_VERSION" ]; then
+            echo "HealthAgent version $HEALTHAGENT_INSTALLED_VERSION is already installed. Skipping installation."
+            systemctl restart healthagent
+            if [ $? -ne 0 ]; then
+                echo "Failed to restart healthagent service. Please check the service configuration and logs."
+                exit 1
+            fi
+            echo "HealthAgent service restarted successfully."
+            exit 0
+        else
+            echo "Installed version ($HEALTHAGENT_INSTALLED_VERSION) does not match expected version ($HEALTHAGENT_VERSION). Reinstalling..."
+            rm -f "$HEALTHAGENT_DIR/.install"
+        fi
+    fi
+
+
     setup_venv
     download_install_healthagent
     setup_dcgm
     setup_systemd
+    echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
     systemctl start healthagent
-} &> $LOG_FILE
+    if [ $? -ne 0 ]; then
+        echo "Failed to start healthagent service. Please check the service configuration and logs."
+        exit 1
+    fi
+} 2>&1 | tee "$LOG_FILE"
