@@ -32,21 +32,22 @@ setup_venv() {
         # a virtual env we need to do a pip install of the package inside the venv, which requires development headers
         # for python and systemd to be present, since the package is actually built during the install.
         yum install -y python3.12 python3.12-devel
-        yum install -y systemd-devel
+        yum install -y pkg-config gcc systemd-devel
         PYTHON_BIN="/usr/bin/python3.12"
     elif [ "$OS" == "ubuntu" ] && [ "$VERSION_ID" == "22.04" ]; then
         echo "Detected Ubuntu 22.04. Installing Python 3.11..."
         apt update
         # We need python dev headers and systemd dev headers for same reaosn mentioned above.
         apt install -y python3.11 python3.11-venv python3.11-dev
-        apt install -y libsystemd-dev
+        apt install -y pkg-config gcc libsystemd-dev
         PYTHON_BIN="/usr/bin/python3.11"
     elif [ "$OS" == "ubuntu" ] && [[ $VERSION =~ ^24\.* ]]; then
         echo "Detected Ubuntu 24. Installing Python 3.12..."
         apt update
-        apt install -y python3.12 python3.12-venv python3.12-dev
-        apt install -y libsystemd-dev
-        PYTHON_BIN="/usr/bin/python3.12"
+        # ubuntu24.04 ships with python3.12 by default, so we can use that.
+        #apt install -y python3.12 python3.12-venv python3.12-dev
+        apt install -y pkg-config gcc libsystemd-dev
+        PYTHON_BIN="/usr/bin/python3"
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
         # dont exit 0
