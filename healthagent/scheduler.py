@@ -21,8 +21,24 @@ class Scheduler:
     @staticmethod
     def periodic(interval):
         def decorator(func):
-            func.interval = interval
-            return func
+            # Handle classmethod
+            if isinstance(func, classmethod):
+                original_func = func.__func__  # Extract the original function
+                def wrapper(cls, *args, **kwargs):
+                    return original_func(cls, *args, **kwargs)
+                wrapper.interval = interval
+                return classmethod(wrapper)
+
+            # Handle staticmethod
+            elif isinstance(func, staticmethod):
+                original_func = func.__func__  # Extract the original function
+                def wrapper(*args, **kwargs):
+                    return original_func(*args, **kwargs)
+                wrapper.interval = interval
+                return staticmethod(wrapper)
+            else:
+                func.interval = interval
+                return func
         return decorator
 
     @classmethod

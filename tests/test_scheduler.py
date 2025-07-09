@@ -27,6 +27,23 @@ async def periodic_task2(queue: asyncio.Queue, myarg: str = "Default"):
     except asyncio.QueueFull:
         Scheduler.cancel_task()
 
+class A:
+    @Scheduler.periodic(2)
+    @classmethod
+    def test_periodic_classmethod(self, queue: asyncio.Queue, myarg: str = "Default"):
+        now = time()
+        try:
+            queue.put_nowait((now, myarg))
+        except asyncio.QueueFull:
+            Scheduler.cancel_task()
+    @staticmethod
+    @Scheduler.periodic(2)
+    def test_periodic_staticmethod(queue: asyncio.Queue, myarg: str = "Default"):
+        now = time()
+        try:
+            queue.put_nowait((now, myarg))
+        except asyncio.QueueFull:
+            Scheduler.cancel_task()
 
 @Scheduler.pool
 def on_demand_task(sleep_t: int = 10):
@@ -109,6 +126,31 @@ async def test_multiple_periodic():
     # total items in the queue should be 11
     assert q1.qsize() == 11
 
+async def test_class_periodic():
+    """
+    Tests periodic tasks can be defined as class methods.
+    """
+
+    Scheduler.start()
+    q1 = asyncio.Queue(maxsize=5)
+    Scheduler.add_task(A.test_periodic_classmethod, q1, "hello_1")
+    await asyncio.sleep(11)
+    Scheduler.stop()
+    # total items in the queue should be 5
+    assert q1.qsize() == 5
+
+async def test_static_periodic():
+    """
+    Tests periodic tasks can be defined as static methods.
+    """
+
+    Scheduler.start()
+    q1 = asyncio.Queue(maxsize=5)
+    Scheduler.add_task(A.test_periodic_staticmethod, q1, "hello_1")
+    await asyncio.sleep(11)
+    Scheduler.stop()
+    # total items in the queue should be 5
+    assert q1.qsize() == 5
 
 async def test_signal_handling():
 
