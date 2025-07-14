@@ -57,7 +57,7 @@ class GpuHealthChecks:
         """
 
         # TODO: These limits will come from a configuration file eventually.
-        policy = Wrap.set_policy(temperature=90, mpe=8, power=self.gpu_config[0].mPowerLimit.val)
+        policy = Wrap.set_policy(mpe=8)
         self.dcgmGroup.policy.Set(policy)
         self.c_callback = create_c_callback(self.handle_policy_violation, asyncio.get_running_loop())
         self.dcgmGroup.policy.Register(policy.condition, self.c_callback, None)
@@ -69,12 +69,11 @@ class GpuHealthChecks:
         """
         # TODO: Add more fields to watch fields in addition to policy fields
         # but for now just add policy fields.
-        policy_fields = Wrap.get_policy_fields()
-        if policy_fields:
-            self.watch_fields = policy_fields
+        self.watch_fields = Wrap.get_fields()
         self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=self.watch_fields)
+        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=3600.00, maxKeepSamples=0)
         ## Add the health watches
-        self.dcgmGroup.health.Set(dcgm_structs.DCGM_HEALTH_WATCH_ALL)
+        self.dcgmGroup.health.Set(Wrap.get_health_mask())
 
     def __display_gpu_config(self):
 
@@ -151,14 +150,14 @@ class GpuHealthChecks:
                 info['xid_error'] = set()
             info['xid_error'].add(callbackresp.val.xid.errnum)
             info['details'] = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
-        elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
-            status = HealthStatus.WARNING
-            info['temperature'] = callbackresp.val.thermal.thermalViolation
-            info['details'] = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
-        elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
-            status = HealthStatus.WARNING
-            info['power'] = callbackresp.val.power.powerViolation
-            info['details'] = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
+        # elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
+        #     status = HealthStatus.WARNING
+        #     info['temperature'] = callbackresp.val.thermal.thermalViolation
+        #     info['details'] = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
+        # elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
+        #     status = HealthStatus.WARNING
+        #     info['power'] = callbackresp.val.power.powerViolation
+        #     info['details'] = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
             info['sbepage_count'] = callbackresp.val.mpr.sbepages
             info['dbepage_count'] = callbackresp.val.mpr.dbepages
@@ -180,16 +179,30 @@ class GpuHealthChecks:
         await self.reporter.update_report(name=health_system, report=report)
         return
 
-    # TODO integrate this. Currently not being run.
-    async def track_fields(self):
 
+    def track_fields(self):
+
+        errors = []
+        category = []
         try:
             response = self.dcgmGroup.samples.GetLatest(self.field_group)
             for gpu in response.values:
-                log.debug(f"Field structure per gpu: {response.values[gpu]}")
-                for field in self.watch_fields:
-                    log.debug(f"field name: {field}")
-                    log.debug(f"field value: {response.values[gpu][field][0].value}")
+
+                curr_temp = response.values[gpu][Wrap.fields.GPUTEMP][0].value
+                slowdown_temp = response.values[gpu][Wrap.fields.GPUTEMP_SLOWDOWN][0].value
+                if curr_temp >= slowdown_temp:
+                    msg = f"GPU temperature reached past slowdown limit gpu: {gpu} Curr temp: {curr_temp}, slowdown limit: {slowdown_temp}"
+                    errors.append(msg)
+                    category.append("Thermal")
+
+                clock_reason = response.values[gpu][Wrap.fields.CLOCK_REASON][0].value
+                throttle_reasons = Wrap.get_throttle_reasons(clock_reason)
+                if throttle_reasons:
+                    status = HealthStatus.ERROR
+                    errors.extend(throttle_reasons)
+                    category.append("Clocks")
+
+            return errors, category
         except Exception as e:
             log.exception(e)
 
@@ -219,6 +232,9 @@ class GpuHealthChecks:
                 status = Wrap.convert_overall_health_to_string(group_health.overallHealth)
                 error_count = group_health.incidentCount
 
+                field_errors, category = self.track_fields()
+                if len(field_errors) > 0:
+                    status = HealthStatus.ERROR
                 if status == HealthStatus.OK and error_count == 0:
                     report = HealthReport()
                     await self.reporter.update_report(name=health_system, report=report)
@@ -233,6 +249,9 @@ class GpuHealthChecks:
                     subsystems.add(system)
                     details.append(group_health.incidents[index].error.msg)
 
+                details.extend(field_errors)
+                subsystems.update(category)
+                error_count += len(field_errors)
                 description=f"{health_system} report {status.value} count={error_count} subsystem={', '.join(subsystems)}"
                 custom_fields['categories'] = subsystems
                 custom_fields['error_count'] = error_count
