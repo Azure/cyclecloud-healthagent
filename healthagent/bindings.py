@@ -1,7 +1,6 @@
 from ctypes import *
 import os
 import sys
-from time import time
 import asyncio
 from healthagent.reporter import HealthStatus
 DCGM_VERSION = os.getenv("DCGM_VERSION")
@@ -34,7 +33,7 @@ def create_c_callback(func: callable, loop: asyncio.BaseEventLoop):
         loop.call_soon_threadsafe(asyncio.create_task, func(callbackResp))
     return c_callback
 
-# Dynamically expose only the relevant callback function based on DCGM version
+
 class Wrap:
 
     class DcgmConnectionFail(Exception):
@@ -42,6 +41,64 @@ class Wrap:
 
     class DcgmGpuNotFound(Exception):
         pass
+
+
+    class fields():
+
+        GPUTEMP = dcgm_fields.DCGM_FI_DEV_GPU_TEMP
+        GPUTEMP_SLOWDOWN = dcgm_fields.DCGM_FI_DEV_SLOWDOWN_TEMP
+        GPUTEMP_SHUTDOWN = dcgm_fields.DCGM_FI_DEV_SHUTDOWN_TEMP
+        CLOCK_REASON = dcgm_fields.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
+        FABRIC_STATUS = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_STATUS
+        FABRIC_ERROR = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE
+        GPUPOWER = dcgm_fields.DCGM_FI_DEV_POWER_USAGE
+
+    @classmethod
+    def get_throttle_reasons(cls, clock_reason):
+        reasons = []
+
+        # This is an indicator of:
+        #  - temperature being too high
+        #  - External Power Brake Assertion is triggered (e.g. by the system power supply)
+        #  - Power draw is too high and Fast Trigger protection is reducing the clocks
+        if clock_reason & dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_SLOWDOWN:
+            reasons.append("Hardware Slowdown in effect due to temperature being too high")
+
+        # SW Thermal Slowdown
+        #
+        # This is an indicator of one or more of the following:
+        #  - Current GPU temperature above the GPU Max Operating Temperature
+        #  - Current memory temperature above the Memory Max Operating Temperature
+        if clock_reason & dcgm_fields.DCGM_CLOCKS_EVENT_REASON_SW_THERMAL:
+            reasons.append("Software Thermal slowdown due to temperature being too high")
+
+        # HW Thermal Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
+        #
+        # This is an indicator of:
+        #  - temperature being too high
+        if clock_reason & dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_THERMAL:
+            reasons.append("Hardware Thermal slowdown due to temperature being too high")
+
+        # HW Power Brake Slowdown (reducing the core clocks by a factor of 2 or more) is engaged
+        #
+        # This is an indicator of:
+        #  - External Power Brake Assertion being triggered (e.g. by the system power supply)
+        if clock_reason & dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_POWER_BRAKE:
+            reasons.append("Hardware Power Brake in effect. Clocks may be reduced by a factor of 2 or more due to external power brake assertion being triggered.")
+
+        return reasons
+
+    @classmethod
+    def get_fields(cls):
+        return [
+            Wrap.fields.CLOCK_REASON,
+            Wrap.fields.FABRIC_ERROR,
+            Wrap.fields.FABRIC_STATUS,
+            Wrap.fields.GPUPOWER,
+            Wrap.fields.GPUTEMP,
+            Wrap.fields.GPUTEMP_SHUTDOWN,
+            Wrap.fields.GPUTEMP_SLOWDOWN
+        ]
 
     @classmethod
     def convert_system_enum_to_system_name(cls, system):
@@ -174,22 +231,9 @@ class Wrap:
         dcgmSystem.UpdateAllFields(waitForUpdate=True)
         return dcgmGroup,dcgmHandle
 
-    @classmethod
-    def get_policy_fields(cls):
-        return [dcgm_fields.DCGM_FI_DEV_ECC_DBE_VOL_DEV,
-                dcgm_fields.DCGM_FI_DEV_PCIE_REPLAY_COUNTER,
-                dcgm_fields.DCGM_FI_DEV_NVLINK_CRC_FLIT_ERROR_COUNT_TOTAL,
-                dcgm_fields.DCGM_FI_DEV_NVLINK_CRC_DATA_ERROR_COUNT_TOTAL,
-                dcgm_fields.DCGM_FI_DEV_NVLINK_REPLAY_ERROR_COUNT_TOTAL,
-                dcgm_fields.DCGM_FI_DEV_NVLINK_RECOVERY_ERROR_COUNT_TOTAL,
-                dcgm_fields.DCGM_FI_DEV_XID_ERRORS,
-                dcgm_fields.DCGM_FI_DEV_GPU_TEMP,
-                dcgm_fields.DCGM_FI_DEV_RETIRED_SBE,
-                dcgm_fields.DCGM_FI_DEV_POWER_USAGE,
-                dcgm_fields.DCGM_FI_DEV_RETIRED_DBE]
 
     @classmethod
-    def set_policy(cls, temperature, mpe, power):
+    def set_policy(cls, mpe):
         """
         Setup policy violations and thresholds.
         Add required fields for tracking.
@@ -219,10 +263,10 @@ class Wrap:
         policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].val.boolean = True
 
 
-        # Thermal errors
-        policy.condition |= dcgm_structs.DCGM_POLICY_COND_THERMAL
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].tag = 1
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = temperature
+        # # Thermal errors
+        # policy.condition |= dcgm_structs.DCGM_POLICY_COND_THERMAL
+        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].tag = 1
+        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = temperature
 
         # Max pages retired errors
         policy.condition |= dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED
@@ -230,9 +274,14 @@ class Wrap:
         policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].val.llval = mpe
 
 
-        # Power draw HW errors
-        policy.condition |= dcgm_structs.DCGM_POLICY_COND_POWER
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].tag = 1
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].val.llval = power
+        # # Power draw HW errors
+        # policy.condition |= dcgm_structs.DCGM_POLICY_COND_POWER
+        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].tag = 1
+        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].val.llval = power
 
         return policy
+
+    @classmethod
+    def get_health_mask(cls):
+        exclude_mask = dcgm_structs.DCGM_HEALTH_WATCH_THERMAL | dcgm_structs.DCGM_HEALTH_WATCH_POWER
+        return dcgm_structs.DCGM_HEALTH_WATCH_ALL & ~exclude_mask
