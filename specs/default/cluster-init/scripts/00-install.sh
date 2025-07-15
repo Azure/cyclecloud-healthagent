@@ -44,10 +44,9 @@ setup_venv() {
     elif [ "$OS" == "ubuntu" ] && [[ $VERSION =~ ^24\.* ]]; then
         echo "Detected Ubuntu 24. Installing Python 3.12..."
         apt update
-        # ubuntu24.04 ships with python3.12 by default, so we can use that.
-        #apt install -y python3.12 python3.12-venv python3.12-dev
+        apt install -y python3.12 python3.12-venv python3.12-dev
         apt install -y pkg-config gcc libsystemd-dev
-        PYTHON_BIN="/usr/bin/python3"
+        PYTHON_BIN="/usr/bin/python3.12"
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
         # dont exit 0
