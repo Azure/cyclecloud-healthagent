@@ -209,7 +209,8 @@ class Wrap:
         opMode = dcgm_structs.DCGM_OPERATION_MODE_AUTO
         # create a dcgm handle by connecting to host engine process
         try:
-            dcgmHandle = pydcgm.DcgmHandle(ipAddress='127.0.0.1', opMode=opMode)
+            # Load DCGM library in embedded mode by not giving an IP address.
+            dcgmHandle = pydcgm.DcgmHandle(opMode=opMode)
 
             ## Get a handle to the system level object for DCGM
             dcgmSystem = dcgmHandle.GetSystem()
@@ -231,6 +232,13 @@ class Wrap:
         dcgmSystem.UpdateAllFields(waitForUpdate=True)
         return dcgmGroup,dcgmHandle
 
+    @classmethod
+    def disconnect(cls, handle, grp):
+        if grp:
+            grp.Delete()
+            del(grp)
+        if handle:
+            del(handle)
 
     @classmethod
     def set_policy(cls, mpe):

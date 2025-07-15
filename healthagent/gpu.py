@@ -373,5 +373,7 @@ def run_active_healthchecksv2():
         report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
         report.message = "GPU Epilog Errors"
         report.custom_fields = custom_fields
+
+    Wrap.disconnect(dcgmHandle, dcgmGroup)
     return report
 
