@@ -182,6 +182,10 @@ class GpuHealthChecks:
 
     def track_fields(self):
 
+        """
+        Read field values from DCGM.
+        """
+
         errors = []
         category = []
         try:
@@ -198,9 +202,19 @@ class GpuHealthChecks:
                 clock_reason = response.values[gpu][Wrap.fields.CLOCK_REASON][0].value
                 throttle_reasons = Wrap.get_throttle_reasons(clock_reason)
                 if throttle_reasons:
-                    status = HealthStatus.ERROR
                     errors.extend(throttle_reasons)
                     category.append("Clocks")
+                fabric_status = response.values[gpu][Wrap.fields.FABRIC_STATUS][0].value
+                if fabric_status == dcgm_structs.DcgmFMStatusFailure:
+                    fabric_error = response.values[gpu][Wrap.fields.FABRIC_ERROR][0].value
+                    msg = f"Fabric Manager finished training but failed, error code: {fabric_error}"
+                    errors.append(msg)
+                    category.append("FabricManager")
+                elif fabric_status == dcgm_structs.DcgmFMStatusInProgress:
+                    fabric_error = response.values[gpu][Wrap.fields.FABRIC_ERROR][0].value
+                    msg = f"Fabric Manager not running, training in progress, error code: {fabric_error}"
+                    errors.append(msg)
+                    category.append("FabricManager")
 
             return errors, category
         except Exception as e:
@@ -252,7 +266,7 @@ class GpuHealthChecks:
                 details.extend(field_errors)
                 subsystems.update(category)
                 error_count += len(field_errors)
-                description=f"{health_system} report {status.value} count={error_count} subsystem={', '.join(subsystems)}"
+                description = f"{health_system} report {status.value} count={error_count} subsystem={', '.join(subsystems)}"
                 custom_fields['categories'] = subsystems
                 custom_fields['error_count'] = error_count
                 report = HealthReport(status=status,
