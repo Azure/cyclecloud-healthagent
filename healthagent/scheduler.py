@@ -83,8 +83,18 @@ class Scheduler:
             return asyncio.create_task(self.__task_wrapper(interval, function, *args, **kwargs))
         else:
             loop = asyncio.get_running_loop()
-            fut = loop.run_in_executor(self._pool, function, *args)
-            return fut
+            pool = ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=multiprocessing.get_context("spawn")
+            )
+            future = loop.run_in_executor(pool, function, *args)
+
+            # Clean up pool once future is done
+            def shutdown_pool(_):
+                pool.shutdown(wait=True)
+
+            future.add_done_callback(shutdown_pool)
+            return future
 
     def subprocess(*sp_args, **sp_kwargs):
         # Set defaults only if not already specified
@@ -108,15 +118,8 @@ class Scheduler:
         self.stop_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
         self.stop_event.clear()
-        self._pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn'))
 
     @classmethod
     def stop(self):
 
         self.stop_event.set()
-        if self._pool and self._pool._processes:
-            for process in self._pool._processes.values():
-                process.terminate()
-
-            self._pool.shutdown(wait=False)
-            log.debug("Shut down process pool")
