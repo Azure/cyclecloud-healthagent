@@ -3,7 +3,7 @@ set -x
 set -e
 
 # Cluster-Init (v1) script to setup healthagent
-HEALTHAGENT_VERSION=1.0.2
+HEALTHAGENT_VERSION=1.0.3
 HEALTHAGENT_DIR="/opt/healthagent"
 VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
@@ -198,7 +198,11 @@ mkdir -p $HEALTHAGENT_DIR
 
     setup_venv
     download_install_healthagent
-    setup_dcgm
+    # Check if gpu's exist
+    if nvidia-smi -L > /dev/null 2>&1; then
+        echo "NVIDIA GPU is present and nvidia-smi is working"
+        setup_dcgm
+    fi
     setup_systemd
     echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
     systemctl start healthagent
