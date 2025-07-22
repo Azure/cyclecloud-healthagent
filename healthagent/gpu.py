@@ -278,20 +278,7 @@ class GpuHealthChecks:
 
             except dcgm_structs.DCGMError as e:
                 code = e.value
-                if code == dcgm_structs.DCGM_ST_CONNECTION_NOT_VALID:
-                    # We lost connection to DCGM, try to re-initialize.
-                    log.error("Connection not valid, Re-initializing connection to nvidia-dcgm")
-                    try:
-                        self.setup()
-                    except Wrap.DcgmConnectionFail as e:
-                        log.critical("Unable to connect to DCGM, is the DCGM service running?")
-                        log.critical("To re-instantiate checks, start the dcgm service.")
-                        # cancel this job from repeating, since it will fail anyway.
-                        Scheduler.cancel_task()
-                    else:
-                        log.info("Re-initialized our connection to DCGM.")
-                else:
-                    log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
+                log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
         except Exception as e:
             log.exception(f"{e}")
 
