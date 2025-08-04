@@ -5,6 +5,7 @@ import logging
 import pickle
 import os
 import signal
+import tracemalloc
 from time import perf_counter
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
@@ -30,8 +31,120 @@ class Healthagent:
     socket = f"{rundir}/health.sock"
     server = None
     modules = {}
+    debug_mode = 0
 
     @classmethod
+    @Scheduler.periodic(120)
+    async def profile_memory(self):
+
+        if not tracemalloc.is_tracing():
+            # collect 25 frames
+            tracemalloc.start(25)
+
+        snapshot = tracemalloc.take_snapshot()
+        top_stats = snapshot.statistics("lineno")
+
+        log.debug(f"[tracemalloc] Top {len(top_stats[:10])} allocations:")
+        for stat in top_stats[:10]:
+            log.debug(stat)
+
+    @classmethod
+    @Scheduler.periodic(120)
+    async def monitor_memory_usage(self):
+        """
+        Monitor RSS memory usage using /proc
+        """
+        try:
+
+            # Read from /proc/PID/status
+            with open(f'/proc/{self.pid}/status', 'r') as f:
+                for line in f:
+                    if line.startswith('VmRSS:'):
+                        # Extract RSS in kB and convert to MB
+                        rss_kb = int(line.split()[1])
+                        rss_mb = rss_kb / 1024
+
+                        log.debug(f"[Memory Monitor] PID: {self.pid}, RSS: {rss_mb:.2f} MB")
+
+
+                        break
+
+        except Exception as e:
+            log.exception(f"Unexpected error monitoring memory: {e}")
+
+
+    @classmethod
+    @Scheduler.periodic(300)
+    async def monitor_shared_libraries(self):
+        """
+        Monitor shared libraries memory usage by reading /proc/PID/smaps.
+        Reports top 10 shared libraries by RSS usage.
+        """
+        try:
+            smaps_path = f'/proc/{self.pid}/smaps'
+
+            library_memory = {}
+            current_mapping = None
+            current_rss = 0
+
+            with open(smaps_path, 'r') as f:
+                for line in f:
+                    line = line.strip()
+
+                    # Check if this is a new memory mapping (starts with address range)
+                    if '-' in line and line[0].isdigit() or line[0].lower() in 'abcdef':
+                        # Save previous mapping if it was a shared library
+                        if current_mapping and current_mapping.endswith('.so') or (current_mapping and '.so.' in current_mapping):
+                            if current_mapping not in library_memory:
+                                library_memory[current_mapping] = 0
+                            library_memory[current_mapping] += current_rss
+
+                        # Parse new mapping
+                        parts = line.split()
+                        if len(parts) >= 6:
+                            current_mapping = parts[5]  # Path/filename
+                            current_rss = 0
+                        else:
+                            current_mapping = None
+                            current_rss = 0
+
+                    # Parse RSS line
+                    elif line.startswith('Rss:'):
+                        rss_kb = int(line.split()[1])
+                        current_rss += rss_kb
+
+            # Handle the last mapping
+            if current_mapping and (current_mapping.endswith('.so') or '.so.' in current_mapping):
+                if current_mapping not in library_memory:
+                    library_memory[current_mapping] = 0
+                library_memory[current_mapping] += current_rss
+
+            # Sort libraries by memory usage and get top 10
+            top_libraries = sorted(library_memory.items(), key=lambda x: x[1], reverse=True)[:10]
+
+            if top_libraries:
+                log.debug(f"[Shared Libraries] Top 10 shared libraries by RSS usage:")
+                total_lib_memory = 0
+                for i, (lib_path, rss_kb) in enumerate(top_libraries, 1):
+                    rss_mb = rss_kb / 1024
+                    total_lib_memory += rss_kb
+                    # Extract just the library name from full path
+                    lib_name = lib_path.split('/')[-1] if '/' in lib_path else lib_path
+                    log.debug(f"[Shared Libraries] {i:2d}. {lib_name:<30} {rss_mb:8.2f} MB ({rss_kb:,} KB)")
+
+                total_lib_mb = total_lib_memory / 1024
+                log.debug(f"[Shared Libraries] Total shared library memory: {total_lib_mb:.2f} MB")
+            else:
+                log.debug("[Shared Libraries] No shared libraries found in memory mappings")
+
+        except FileNotFoundError:
+            log.error(f"Cannot read /proc/{self.pid}/smaps - file not found")
+        except PermissionError:
+            log.error(f"Permission denied reading /proc/{self.pid}/smaps")
+        except Exception as e:
+            log.exception(f"Error monitoring shared libraries: {e}")
+
+
     def handler(self, signum, frame):
 
         if os.getpid() == self.pid:
@@ -199,7 +312,7 @@ class Healthagent:
 
 
     @classmethod
-    async def run(self):
+    async def run(self, debug_mode=False):
 
         self.pid = os.getpid()
         log.info(f"Healthagent pid: {self.pid}")
@@ -216,6 +329,11 @@ class Healthagent:
             raise PermissionError(f"Workdir is not writable: {self.workdir}")
         os.makedirs(self.rundir, exist_ok=True)
 
+        if debug_mode:
+            log.info("Running Healthagent in DEBUG Mode")
+            Scheduler.add_task(self.profile_memory)
+            Scheduler.add_task(self.monitor_memory_usage)
+            Scheduler.add_task(self.monitor_shared_libraries)
         # Periodically indicate liveness to systemd watchdog  (service will be restarted if it misses enough checks)
         Scheduler.add_task(self.reset_systemd_watchdog)
 
