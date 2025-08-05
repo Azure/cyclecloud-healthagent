@@ -289,7 +289,7 @@ class Healthagent:
             #TODO: Future work
             # Right now list of services are hardcoded, and any service not loaded on a node is automatically ignored.
             # But this list eventually needs to come either through the CLI or through the config file.
-            await systemd.add_monitor(services=["munge.service", "slurmd.service", "slurmctld.service", "slurmdbd.service", "slurmrestd.service", "nvidia-imex.service", "nvidia-dcgm.service"])
+            await systemd.add_monitor(services=["munge.service", "slurmd.service", "slurmctld.service", "slurmdbd.service", "slurmrestd.service", "nvidia-imex.service", "nvidia-dcgm.service","nvidia-persistenced.service"])
         except Exception as e:
             log.exception(e)
 
