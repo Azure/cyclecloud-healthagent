@@ -52,6 +52,7 @@ class Wrap:
         FABRIC_STATUS = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_STATUS
         FABRIC_ERROR = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE
         GPUPOWER = dcgm_fields.DCGM_FI_DEV_POWER_USAGE
+        PERSISTENCE_MODE = dcgm_fields.DCGM_FI_DEV_PERSISTENCE_MODE
 
     @classmethod
     def get_throttle_reasons(cls, clock_reason):
@@ -97,7 +98,8 @@ class Wrap:
             Wrap.fields.GPUPOWER,
             Wrap.fields.GPUTEMP,
             Wrap.fields.GPUTEMP_SHUTDOWN,
-            Wrap.fields.GPUTEMP_SLOWDOWN
+            Wrap.fields.GPUTEMP_SLOWDOWN,
+            Wrap.fields.PERSISTENCE_MODE
         ]
 
     @classmethod

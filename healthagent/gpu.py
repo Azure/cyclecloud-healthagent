@@ -91,15 +91,6 @@ class GpuHealthChecks:
 
     async def create(self):
         await self.reporter.clear_all_errors()
-        # set persistence mode on GPU's
-        args = ["/usr/bin/nvidia-persistenced", "-u", "root"]
-        task = Scheduler.subprocess(*args)
-        out = await Scheduler.add_task(task)
-        stdout, stderr = await out.communicate()
-        if out.returncode != 0:
-            log.debug(stdout)
-            log.error(stderr)
-            log.error("Unable to set persistent mode on GPUs")
         log.debug("Adding periodic background healthchecks")
         Scheduler.add_task(self.run_background_healthchecks)
 
@@ -194,8 +185,8 @@ class GpuHealthChecks:
 
                 curr_temp = response.values[gpu][Wrap.fields.GPUTEMP][0].value
                 slowdown_temp = response.values[gpu][Wrap.fields.GPUTEMP_SLOWDOWN][0].value
-                if curr_temp >= slowdown_temp:
-                    msg = f"GPU temperature reached past slowdown limit gpu: {gpu} Curr temp: {curr_temp}, slowdown limit: {slowdown_temp}"
+                if curr_temp >= (0.95*slowdown_temp):
+                    msg = f"GPU temperature reached very close to the slowdown limit gpu: {gpu} Curr temp: {curr_temp}, slowdown limit: {slowdown_temp}"
                     errors.append(msg)
                     category.append("Thermal")
 
@@ -215,6 +206,11 @@ class GpuHealthChecks:
                     msg = f"Fabric Manager not running, training in progress, error code: {fabric_error}"
                     errors.append(msg)
                     category.append("FabricManager")
+                persistence_mode = response.values[gpu][Wrap.fields.PERSISTENCE_MODE][0].value
+                if persistence_mode != 1:
+                    msg = f"Persistence Mode not set for GPU: {gpu}, Restart nvidia-persistenced or Reboot the system."
+                    errors.append(msg)
+                    category.append("System")
 
             return errors, category
         except Exception as e:
