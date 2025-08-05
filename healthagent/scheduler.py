@@ -19,6 +19,22 @@ class Scheduler:
         return func
 
     @staticmethod
+    def _get_function_name(func):
+        """Get a meaningful name for a function, including class context."""
+        if hasattr(func, '__name__'):
+            name = func.__name__
+            # Check if it's a bound method with a class
+            if hasattr(func, '__self__') and hasattr(func.__self__, '__name__'):
+                return f"{func.__self__.__name__}.{name}"
+            # Check if it has a qualified name (better for nested functions)
+            elif hasattr(func, '__qualname__'):
+                return func.__qualname__
+            else:
+                return name
+        else:
+            return str(func)
+
+    @staticmethod
     def periodic(interval):
         def decorator(func):
             # Handle classmethod
@@ -49,7 +65,8 @@ class Scheduler:
         """
         out = None
         try:
-            log.debug(f"interval: {interval}, function: {function}, {args}, {kwargs}")
+            func_name = self._get_function_name(func=function)
+            log.debug(f"interval: {interval}, function: {func_name}, {args}, {kwargs}")
             if function and callable(function):
                 out = await function(*args, **kwargs)
         except Exception as e:
