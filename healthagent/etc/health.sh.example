@@ -20,7 +20,7 @@ manage_node_state() {
     if [[ "$state" == "idle" ]] && [[ $errors -ge 1 ]]; then
         echo "Draining node $node with reason 'healthcheck failures'..."
         /usr/bin/scontrol update NodeName="$node" State=drain Reason="Healthcheck failures. Run 'health -s' view health report."
-    elif [[ "$state" =~ ^drain(ed)?$ ]] && [[ "$reason" == "healthcheck failures" ]] && [[ $errors -eq 0 ]]; then
+    elif [[ "$state" =~ ^drain(ed)?$ ]] && [[ "$reason" =~ ^"Healthcheck failures".* ]] && [[ $errors -eq 0 ]]; then
         echo "Node $node is drained for reason '$reason' — resetting to resume."
         /usr/bin/scontrol update NodeName="$node" State=resume
     else
