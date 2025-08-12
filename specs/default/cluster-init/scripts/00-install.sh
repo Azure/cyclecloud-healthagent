@@ -3,7 +3,7 @@ set -x
 set -e
 
 # Cluster-Init (v1) script to setup healthagent
-HEALTHAGENT_VERSION=1.0.3
+HEALTHAGENT_VERSION=1.0.4
 HEALTHAGENT_DIR="/opt/healthagent"
 VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
