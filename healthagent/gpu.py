@@ -21,9 +21,10 @@ class GpuNotFoundException(Exception):
 
 class GpuHealthChecks:
 
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, test_mode=False):
 
         self.reporter = reporter
+        self.test_mode = test_mode
 
         # Right now we are only looking for nvidia devices.
         if not os.path.exists("/dev/nvidia0"):
@@ -43,7 +44,7 @@ class GpuHealthChecks:
         self.dcgmHandle = None
         self.watch_fields = []
         self.gpu_config = []
-        self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group")
+        self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group", test_mode=self.test_mode)
         ## Get the current configuration for the group
         self.gpu_config = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
         self.setup_dcgm_policy()
@@ -274,6 +275,16 @@ class GpuHealthChecks:
 
             except dcgm_structs.DCGMError as e:
                 code = e.value
+                if code == dcgm_structs.DCGM_ST_CONNECTION_NOT_VALID:
+                    # We lost connection to DCGM, try to re-initialize.
+                    log.error("Connection not valid, Re-initializing connection to nvidia-dcgm")
+                    try:
+                        self.setup()
+                    except Wrap.DcgmConnectionFail as e:
+                        log.critical("Unable to connect to DCGM, is the DCGM service running?")
+                        log.critical("To re-instantiate checks, start the dcgm service.")
+                    else:
+                        log.info("Re-initialized our connection to DCGM.")
                 log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
         except Exception as e:
             log.exception(f"{e}")
