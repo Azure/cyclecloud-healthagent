@@ -25,6 +25,9 @@ class GpuHealthChecks:
 
         self.reporter = reporter
 
+        # TODO: Move this to config file
+        self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+
         # Right now we are only looking for nvidia devices.
         if not os.path.exists("/dev/nvidia0"):
             log.info("GPU devices not found, skipping GPU checks")
@@ -43,7 +46,9 @@ class GpuHealthChecks:
         self.dcgmHandle = None
         self.watch_fields = []
         self.gpu_config = []
-        self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group")
+        if self.test_mode:
+            log.info("Running GPU tests in TEST_MODE")
+        self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group", test_mode=self.test_mode)
         ## Get the current configuration for the group
         self.gpu_config = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
         self.setup_dcgm_policy()
@@ -88,6 +93,14 @@ class GpuHealthChecks:
             log.debug("SM  Clock   : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPerfState.targetClocks.smClock)))
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
+
+
+    async def send_report(self, name: str, report: HealthReport):
+
+        if self.test_mode:
+            await self.reporter.update_report(name=name, report=report, send=False)
+        else:
+            await self.reporter.update_report(name=name, report=report)
 
     async def create(self):
         await self.reporter.clear_all_errors()
@@ -167,7 +180,7 @@ class GpuHealthChecks:
             for condition in report.custom_fields:
                 for gpu in report.custom_fields[condition]:
                     report.details += f"\n{report.custom_fields[condition][gpu]['details']}"
-        await self.reporter.update_report(name=health_system, report=report)
+        await self.send_report(name=health_system, report=report)
         return
 
 
@@ -220,7 +233,7 @@ class GpuHealthChecks:
     async def run_epilog(self):
         health_system = f"ActiveGPUHealthChecks"
         report = await Scheduler.add_task(run_active_healthchecksv2)
-        await self.reporter.update_report(name=health_system, report=report)
+        await self.send_report(name=health_system, report=report)
         response = {}
         response[health_system] = report.view()
         return response
@@ -269,11 +282,21 @@ class GpuHealthChecks:
                                       description=description,
                                       details='\n'.join(details),
                                       custom_fields=custom_fields)
-                await self.reporter.update_report(name=health_system, report=report)
+                await self.send_report(name=health_system, report=report)
                 return
 
             except dcgm_structs.DCGMError as e:
                 code = e.value
+                if code == dcgm_structs.DCGM_ST_CONNECTION_NOT_VALID:
+                    # We lost connection to DCGM, try to re-initialize.
+                    log.error("Connection not valid, Re-initializing connection to nvidia-dcgm")
+                    try:
+                        self.setup()
+                    except Wrap.DcgmConnectionFail as e:
+                        log.critical("Unable to connect to DCGM: {e}")
+                        log.critical("To re-instantiate checks, start the dcgm service.")
+                    else:
+                        log.info("Re-initialized our connection to DCGM.")
                 log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
         except Exception as e:
             log.exception(f"{e}")

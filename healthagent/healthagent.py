@@ -310,7 +310,7 @@ class Healthagent:
         except Exception as e:
             log.exception(e)
 
-        try: 
+        try:
             from healthagent.kmsg import KmsgReader
             module = 'kmsg'
             reporter = self.get_reporter(module=module)

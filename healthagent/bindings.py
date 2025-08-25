@@ -203,7 +203,7 @@ class Wrap:
         return False
 
     @classmethod
-    def connect(cls, grp_name: str):
+    def connect(cls, grp_name: str, test_mode=False):
         ## Initialize the DCGM Engine as automatic operation mode. This is required when connecting
         ## to a "standalone" hostengine (one that is running separately) but can also be done on an
         ## embedded hostengine.  In this mode, fields are updated
@@ -211,8 +211,14 @@ class Wrap:
         opMode = dcgm_structs.DCGM_OPERATION_MODE_AUTO
         # create a dcgm handle by connecting to host engine process
         try:
-            # Load DCGM library in embedded mode by not giving an IP address.
-            dcgmHandle = pydcgm.DcgmHandle(opMode=opMode)
+            if test_mode:
+                # Connect to DCGM host engine, useful for using DCGM error injection framework for injecting errors and
+                # validating healthagent actions.
+                dcgmHandle = pydcgm.DcgmHandle(ipAddress="127.0.0.1", opMode=opMode)
+            else:
+                # Load DCGM library in embedded mode. In embedded mode, DCGM library is loaded as a shared library. This
+                # is the production mode.
+                dcgmHandle = pydcgm.DcgmHandle(opMode=opMode)
 
             ## Get a handle to the system level object for DCGM
             dcgmSystem = dcgmHandle.GetSystem()
