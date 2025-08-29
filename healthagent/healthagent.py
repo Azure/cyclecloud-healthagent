@@ -320,6 +320,17 @@ class Healthagent:
             log.exception(e)
             log.error("kmsg module disabled")
 
+        try:
+            from healthagent.network import NetworkHealthChecks
+            module = "network"
+            reporter = self.get_reporter(module=module)
+            network_checker = NetworkHealthChecks(reporter=reporter)
+            self.modules[module] = network_checker
+            await network_checker.create()
+        except Exception as e:
+            log.exception(e)
+            log.error("Network module disabled")
+
     @Scheduler.periodic(60)
     @classmethod
     async def reset_systemd_watchdog(self):
