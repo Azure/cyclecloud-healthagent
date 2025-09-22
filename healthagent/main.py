@@ -15,6 +15,8 @@ def main():
     debug_mode = False
     if os.getenv("DEBUG_MODE") == "1":
         debug_mode = True
+    if os.getenv("TEST_MODE") == "1":
+        test_mode = True
     asyncio.run(Healthagent.run(debug_mode=debug_mode))
 
 if __name__ == "__main__":
