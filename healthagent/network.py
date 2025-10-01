@@ -1,5 +1,6 @@
 import os
 import logging
+from collections import deque, defaultdict
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
@@ -79,13 +80,41 @@ class NetworkInterface:
     # kernel devpath of a device but with /sys prefix
     device: str = None
 
+class SlidingStore:
+
+    def __init__(self, window: int = 60):
+        self._store = defaultdict(lambda: deque(maxlen=window))
+        self.window = window
+
+    def __setitem__(self, key, value):
+
+        self._store[key].append(value)
+
+    def __getitem__(self, key):
+        """Return the deque for a key."""
+        return self._store[key]
+
+    def get_rate_of_change(self, key):
+
+        dq = self._store[key]
+        if len(dq) < 2:
+            return 0
+
+        start_value = dq[0]
+        end_value = dq[-1]
+
+        value_diff = end_value - start_value
+
+        return value_diff
 
 class NetworkHealthChecks:
 
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, window: int = 60):
 
         self.sysfs = "/sys/class/net"
         self.reporter = reporter
+        #TODO: Make this and the sampling rate configurable.
+        self.timestore = SlidingStore(window=window)
 
     async def create(self):
 
@@ -170,6 +199,7 @@ class NetworkHealthChecks:
                 with open(os.path.join(iface, "carrier_down_count"), 'r') as f:
                     val = f.read().strip()
                 ni.carrier_down_count = int(val)
+                self.timestore[ni.name] = ni.carrier_down_count
             except OSError as e:
                 log.error(f"Unreadable Carrier Down Count for interface: {ni.name}, {e}")
 
@@ -204,11 +234,11 @@ class NetworkHealthChecks:
         msgs = []
         for ni in interfaces:
             custom_fields[ni.name] = {}
-            if ni.carrier_down_count > 0:
-                custom_fields[ni.name]['carrier_down_count'] = ni.carrier_down_count
-                custom_fields[ni.name]['carrier_changes'] = ni.carrier_changes
-                msgs.append(f"Number of times {ni.name} went down in {uptime} hours: {ni.carrier_down_count}")
-                msgs.append(f"Number of times {ni.name} link flapped in {uptime} hours: {ni.carrier_changes}")
+            link_down_rate_per_hour = self.timestore.get_rate_of_change(key=ni.name)
+            custom_fields[ni.name]['link_down_rate_per_hour'] = link_down_rate_per_hour
+            custom_fields[ni.name]['link_flap_since_uptime'] = ni.carrier_changes
+            if link_down_rate_per_hour >= 1:
+                msgs.append(f"Network interface {ni.name} went down {link_down_rate_per_hour} times in the last hour")
                 if report.status == HealthStatus.OK:
                     report.status = HealthStatus.WARNING
 
@@ -218,6 +248,7 @@ class NetworkHealthChecks:
                 msgs.append(f"Network interface {ni.name} is not operational and in state {ni.operstate.value}.")
                 custom_fields[ni.name]['carrier'] = ni.carrier.value
                 report.status = HealthStatus.ERROR
+
 
         if msgs:
             report.details = '\n'.join(msgs)
