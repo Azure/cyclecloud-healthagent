@@ -32,6 +32,7 @@ class Healthagent:
     server = None
     modules = {}
     debug_mode = 0
+    test_mode = False
 
     @classmethod
     @Scheduler.periodic(120)
@@ -288,7 +289,7 @@ class Healthagent:
             try:
                 module = "gpu"
                 reporter = self.get_reporter(module=module)
-                gpu = GpuHealthChecks(reporter=reporter)
+                gpu = GpuHealthChecks(reporter=reporter, test_mode=self.test_mode)
                 self.modules[module] = gpu
                 await gpu.create()
             except GpuNotFoundException as e:
@@ -340,11 +341,14 @@ class Healthagent:
 
 
     @classmethod
-    async def run(self, debug_mode=False):
+    async def run(self, debug_mode=False, test_mode=False):
 
         self.pid = os.getpid()
+        self.test_mode = test_mode
         log.info(f"Healthagent pid: {self.pid}")
         log.info(f"Healthagent version: {VERSION}")
+        if self.test_mode:
+            log.info("Running Healthagent in TEST MODE")
         loop = asyncio.get_running_loop()
         loop.add_signal_handler(signal.SIGINT, lambda: self.handler(signal.SIGINT, None))
         loop.add_signal_handler(signal.SIGTERM, lambda: self.handler(signal.SIGTERM, None))
@@ -358,7 +362,7 @@ class Healthagent:
         os.makedirs(self.rundir, exist_ok=True)
 
         if debug_mode:
-            log.info("Running Healthagent in DEBUG Mode")
+            log.info("Running Healthagent in DEBUG MODE")
             Scheduler.add_task(self.profile_memory)
             Scheduler.add_task(self.monitor_memory_usage)
             Scheduler.add_task(self.monitor_shared_libraries)
