@@ -1,6 +1,7 @@
 #!/bin/bash
 set -x
 set -e
+set -o pipefail
 
 # Cluster-Init (v1) script to setup healthagent
 HEALTHAGENT_VERSION=1.0.4
@@ -74,7 +75,7 @@ download_install_healthagent() {
     fi
 
     echo "Downloading healthagent package: $PACKAGE"
-    jetpack download --project healthagent $PACKAGE
+    /opt/cycle/jetpack/bin/jetpack download --project healthagent $PACKAGE
     echo "Installing healthagent package..."
     source $VENV_DIR/bin/activate
     pip install --force-reinstall $PACKAGE
@@ -196,18 +197,17 @@ mkdir -p $HEALTHAGENT_DIR
     fi
 
 
-    setup_venv
-    download_install_healthagent
+    setup_venv || exit 1
+    download_install_healthagent || exit 1
     # Check if gpu's exist
     if nvidia-smi -L > /dev/null 2>&1; then
         echo "NVIDIA GPU is present and nvidia-smi is working"
-        setup_dcgm
+        setup_dcgm || exit 1
     fi
-    setup_systemd
+    setup_systemd || exit 1
     echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
-    systemctl start healthagent
-    if [ $? -ne 0 ]; then
-        echo "Failed to start healthagent service. Please check the service configuration and logs."
+    if ! systemctl restart healthagent; then
+        echo "Failed to restart healthagent service. Please check the service configuration and logs."
         exit 1
     fi
 } 2>&1 | tee "$LOG_FILE"
