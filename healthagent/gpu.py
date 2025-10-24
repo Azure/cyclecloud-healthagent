@@ -26,7 +26,7 @@ class GpuHealthChecks:
         self.reporter = reporter
 
         # TODO: Move this to config file
-        self.test_mode = os.getenv('TEST_MODE', 'false').lower() == 'true'
+        self.test_mode = os.getenv('DCGM_TEST_MODE', 'false').lower() == 'true'
 
         # Right now we are only looking for nvidia devices.
         if not os.path.exists("/dev/nvidia0"):
@@ -93,14 +93,6 @@ class GpuHealthChecks:
             log.debug("SM  Clock   : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPerfState.targetClocks.smClock)))
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
-
-
-    async def send_report(self, name: str, report: HealthReport):
-
-        if self.test_mode:
-            await self.reporter.update_report(name=name, report=report, send=False)
-        else:
-            await self.reporter.update_report(name=name, report=report)
 
     async def create(self):
         await self.reporter.clear_all_errors()
@@ -180,7 +172,7 @@ class GpuHealthChecks:
             for condition in report.custom_fields:
                 for gpu in report.custom_fields[condition]:
                     report.details += f"\n{report.custom_fields[condition][gpu]['details']}"
-        await self.send_report(name=health_system, report=report)
+        await self.reporter.update_report(name=health_system, report=report)
         return
 
 
@@ -233,7 +225,7 @@ class GpuHealthChecks:
     async def run_epilog(self):
         health_system = f"ActiveGPUHealthChecks"
         report = await Scheduler.add_task(run_active_healthchecksv2)
-        await self.send_report(name=health_system, report=report)
+        await self.reporter.update_report(name=health_system, report=report)
         response = {}
         response[health_system] = report.view()
         return response
@@ -251,6 +243,8 @@ class GpuHealthChecks:
             try:
                 details = list()
                 subsystems = set()
+                if not self.dcgmGroup:
+                    raise Wrap.DcgmInvalidHandle
                 group_health = self.dcgmGroup.health.Check()
                 status = Wrap.convert_overall_health_to_string(group_health.overallHealth)
                 error_count = group_health.incidentCount
@@ -282,7 +276,7 @@ class GpuHealthChecks:
                                       description=description,
                                       details='\n'.join(details),
                                       custom_fields=custom_fields)
-                await self.send_report(name=health_system, report=report)
+                await self.reporter.update_report(name=health_system, report=report)
                 return
 
             except dcgm_structs.DCGMError as e:
@@ -290,14 +284,17 @@ class GpuHealthChecks:
                 if code == dcgm_structs.DCGM_ST_CONNECTION_NOT_VALID:
                     # We lost connection to DCGM, try to re-initialize.
                     log.error("Connection not valid, Re-initializing connection to nvidia-dcgm")
-                    try:
-                        self.setup()
-                    except Wrap.DcgmConnectionFail as e:
-                        log.critical("Unable to connect to DCGM: {e}")
-                        log.critical("To re-instantiate checks, start the dcgm service.")
-                    else:
-                        log.info("Re-initialized our connection to DCGM.")
-                log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
+                    raise Wrap.DcgmInvalidHandle
+                else:
+                    log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
+            except Wrap.DcgmInvalidHandle:
+                try:
+                    self.setup()
+                except Wrap.DcgmConnectionFail as e:
+                    log.critical("Unable to connect to DCGM: {e}")
+                    log.critical("To re-instantiate checks, start the dcgm service.")
+                else:
+                    log.info("Re-initialized our connection to DCGM.")
         except Exception as e:
             log.exception(f"{e}")
 
