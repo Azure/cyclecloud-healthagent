@@ -47,7 +47,7 @@ class GpuHealthChecks:
         self.watch_fields = []
         self.gpu_config = []
         if self.test_mode:
-            log.info("Running GPU tests in TEST_MODE")
+            log.info("Running GPU tests in DCGM_TEST_MODE")
         self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group", test_mode=self.test_mode)
         ## Get the current configuration for the group
         self.gpu_config = self.dcgmGroup.config.Get(dcgm_structs.DCGM_CONFIG_CURRENT_STATE)
@@ -283,18 +283,19 @@ class GpuHealthChecks:
                 code = e.value
                 if code == dcgm_structs.DCGM_ST_CONNECTION_NOT_VALID:
                     # We lost connection to DCGM, try to re-initialize.
-                    log.error("Connection not valid, Re-initializing connection to nvidia-dcgm")
-                    raise Wrap.DcgmInvalidHandle
+                    log.error("DCGM Connection not valid")
+                    raise Wrap.DcgmInvalidHandle from None
                 else:
                     log.error("dcgmHealthCheck returned error %d: %s" % (code, e))
-            except Wrap.DcgmInvalidHandle:
-                try:
-                    self.setup()
-                except Wrap.DcgmConnectionFail as e:
-                    log.critical("Unable to connect to DCGM: {e}")
-                    log.critical("To re-instantiate checks, start the dcgm service.")
-                else:
-                    log.info("Re-initialized our connection to DCGM.")
+        except Wrap.DcgmInvalidHandle:
+            log.critical("Invalid DCGM Handle, Attempting to reconnect.")
+            try:
+                self.setup()
+            except Wrap.DcgmConnectionFail as e:
+                log.critical("Unable to connect to DCGM: {e}")
+                log.critical("To re-instantiate checks, restart the nvidia-dcgm service.")
+            else:
+                log.info("Re-initialized our connection to DCGM.")
         except Exception as e:
             log.exception(f"{e}")
 
