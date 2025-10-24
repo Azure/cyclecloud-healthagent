@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 from time import time
 from typing import Any,Dict
 import logging
+import os
 from healthagent.scheduler import Scheduler
 
 log = logging.getLogger('healthagent')
@@ -93,8 +94,27 @@ class Reporter:
         """
         self.jetpack = "/opt/cycle/jetpack/bin/jetpack"
         self.store = {}
+        self.publish_cc = os.getenv("PUBLISH_CC", 'true').lower() == 'true'
+
+        if not os.path.exists(self.jetpack):
+            log.info(f"{self.jetpack} not found")
+            self.publish_cc = False
+
+        if not self.publish_cc:
+            log.info(f"Disabling publishing reports to CC")
         if name:
             self.store[name] = HealthReport()
+
+    @classmethod
+    def load_reporter_obj(cls, old) -> 'Reporter':
+
+        new_reporter = cls()
+        # Transfer the health report store if it exists
+        if hasattr(old, 'store') and old.store:
+            new_reporter.store = old.store
+
+        return new_reporter
+
 
     def get_report(self, name) -> HealthReport:
 
@@ -145,13 +165,15 @@ class Reporter:
         last_report = self.store.get(name)
         if not last_report or (last_report != report):
             self.store[name] = report
-            await self._report_health_status(name)
+            await self.publish_cc_status(name)
         else:
             # still update the last_update
             self.store[name].last_update = report.last_update
 
-    async def _report_health_status(self, name):
+    async def publish_cc_status(self, name):
 
+        if not self.publish_cc:
+            return
         report = self.store.get(name)
         log.debug(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
 
