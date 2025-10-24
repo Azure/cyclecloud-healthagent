@@ -116,6 +116,63 @@ root@ccw4-gpu-2:~# health -e
 
 While any active health checking is being performed, background checks are still always run in the background.
 
+#### DCGM Test mode
+
+DCGM supports 2 modes of operation described [here](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#modes-of-operation) - Standalone mode and Embedded mode.
+
+*Healthagent by default loads DCGM in `embedded` mode which implies that we load the DCGM library directly as a shared library*. This is to avoid reliance on nvidia-dcgm service (nv-hostengine) in production environments, since if the service crashes then it disables GPU tests.
+
+However DCGM has a robust error injection framework that can be used to inject values into specific field ID's. This is described in detail [here](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/dcgm-error-injection.html#error-injection-workflow). This error injection framework only works in Standalone mode since injected values are stored in nv-hostnengine's cache.
+
+Its valuable to test healthagent behaviour by simulating DCGM errors. To do this healthagent supports `DCGM_TEST_MODE` which attempts to connect to DCGM via nv-hostengine (nvidia-dcgm.service). To do this, set the environment variable in healthagent systemd file in `/etc/systemd/system/healthagent.service` as shown under the `service` section:
+
+```bash
+[service]
+Environment="DCGM_TEST_MODE=True"
+```
+
+And then restart healthagent:
+```bash
+systemctl daemon-reload
+systemctl restart healthagent
+```
+
+Then in another terminal, inject values, For example injecting a XID 63 error:
+
+```bash
+root@ccw-1-3-gpu-9:~# dcgmi test --inject --gpuid 0 -f 230 -v 63
+Successfully injected field info.
+```
+
+And then `health -s` should show the injected values:
+
+```
+"gpu": {
+        "BackgroundGPUHealthChecks": {
+            "status": "OK",
+            "last_update": "2025-10-24T20:09:42 UTC"
+        },
+        "GPUPolicyChecks": {
+            "status": "Error",
+            "message": "GPUPolicyChecks reports errors",
+            "description": "GPU Policy Violations detected",
+            "details": "XID errors found: XID {63} on GPU 0",
+            "last_update": "2025-10-24T20:10:02 UTC",
+            "XID Violation": {
+                "0": {
+                    "xid_error": [
+                        63
+                    ],
+                    "details": "XID errors found: XID {63} on GPU 0"
+                }
+            }
+        }
+    }
+```
+
+[DCGM Modes](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#modes-of-operation)
+
+[DCGM Test Injection Framework](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/dcgm-error-injection.html#error-injection-workflow)
 ### WIP
 
 - configurability of health checks
