@@ -173,6 +173,16 @@ And then `health -s` should show the injected values:
 [DCGM Modes](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#modes-of-operation)
 
 [DCGM Test Injection Framework](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/dcgm-error-injection.html#error-injection-workflow)
+
+### CycleCloud Integration
+
+Healthagent reports status of the nodes to CycleCloud via `jetpack`. This can be explicitly disabled by setting `PUBLISH_CC` to `False`. Default value is `True`. Additionally if healthagent is unable to find jetpack binary, then CC reporting is automatically disabled regardless of the value of the environment variable. The environment variable can be configured in healthagent systemd file.
+
+```bash
+[Service]
+Environment="PUBLISH_CC=False"
+```
+
 ### WIP
 
 - configurability of health checks
