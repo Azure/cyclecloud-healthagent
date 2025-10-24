@@ -39,6 +39,9 @@ class Wrap:
     class DcgmConnectionFail(Exception):
         pass
 
+    class DcgmInvalidHandle(Exception):
+        pass
+
     class DcgmGpuNotFound(Exception):
         pass
 
