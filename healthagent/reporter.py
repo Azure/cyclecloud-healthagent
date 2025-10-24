@@ -121,7 +121,7 @@ class Reporter:
                 log.debug(f"Clearing previous error report for {name}")
                 await self.update_report(name=name, report=HealthReport())
 
-    async def update_report(self, name: str, report: HealthReport, send: bool = True):
+    async def update_report(self, name: str, report: HealthReport):
 
         if not name:
             raise ValueError("The 'name' argument cannot be None")
@@ -145,8 +145,7 @@ class Reporter:
         last_report = self.store.get(name)
         if not last_report or (last_report != report):
             self.store[name] = report
-            if send:
-                await self._report_health_status(name)
+            await self._report_health_status(name)
         else:
             # still update the last_update
             self.store[name].last_update = report.last_update
