@@ -185,7 +185,7 @@ class Healthagent:
         if os.path.exists(filename):
             try:
                 with open(filename, 'rb') as f:
-                    return pickle.load(f)
+                    return Reporter.load_reporter_obj(old=pickle.load(f))
             except Exception as e:
                 log.error(e)
                 log.error(f"Unable to restore previous state for module {module}")
