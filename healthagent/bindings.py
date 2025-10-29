@@ -1,7 +1,9 @@
 from ctypes import *
 import os
 import sys
+import re
 import asyncio
+from pathlib import Path
 from healthagent.reporter import HealthStatus
 DCGM_VERSION = os.getenv("DCGM_VERSION")
 
@@ -45,7 +47,6 @@ class Wrap:
     class DcgmGpuNotFound(Exception):
         pass
 
-
     class fields():
 
         GPUTEMP = dcgm_fields.DCGM_FI_DEV_GPU_TEMP
@@ -56,6 +57,87 @@ class Wrap:
         FABRIC_ERROR = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE
         GPUPOWER = dcgm_fields.DCGM_FI_DEV_POWER_USAGE
         PERSISTENCE_MODE = dcgm_fields.DCGM_FI_DEV_PERSISTENCE_MODE
+
+    @classmethod
+    def count_os_gpu_devices(cls) -> int:
+
+        """
+        Count the number of NVIDIA GPU devices in /dev/ directory.
+        Only counts devices matching the pattern /dev/nvidia[0-9]+
+
+        Returns:
+            int: Number of NVIDIA GPU devices found
+        """
+        dev_dir = "/dev"
+        gpu_count = 0
+
+        # Pattern to match nvidia followed by one or more digits
+        pattern = re.compile(r'^nvidia\d+$')
+
+        # List all files in /dev/
+        for filename in os.listdir(dev_dir):
+            # Check if filename matches nvidia[0-9]+
+            if pattern.match(filename):
+                gpu_count += 1
+
+        return gpu_count
+
+    @classmethod
+    def count_pci_gpu_devices(cls) -> int:
+        """
+        Count NVIDIA GPU devices via PCI bus in /sys/bus/pci/devices.
+        Follows sysfs best practices - directly accesses /sys/bus/pci/devices
+        without relying on device links.
+
+        Returns:
+            int:  Number of NVIDIA GPU devices found on PCI bus
+
+        References:
+        Nvidia uses vendor ID: 10de. https://pci-ids.ucw.cz/
+        Exhaustive list of PCI device ID's are found here (very long): /usr/share/misc/pci.ids
+        Online reference for Class ID's is found here: https://admin.pci-ids.ucw.cz/read/PD
+        This is the reference used by "lspci" command.
+        """
+
+        pci_devices_path = Path('/sys/bus/pci/devices')
+
+        if not pci_devices_path.exists():
+            return 0
+
+        gpu_count = 0
+
+        # Directly iterate through PCI devices - no device links needed
+        for device_path in pci_devices_path.iterdir():
+            try:
+                # Read vendor ID directly from device directory
+                vendor_file = device_path / 'vendor'
+                if not vendor_file.exists():
+                    continue
+
+                vendor_id = vendor_file.read_text().strip()
+
+                # Check if it's NVIDIA (vendor ID 0x10de)
+                if vendor_id != '0x10de':
+                    continue
+
+                # Read device class directly from device directory
+                class_file = device_path / 'class'
+                if not class_file.exists():
+                    continue
+
+                device_class = class_file.read_text().strip()
+
+                # Check if it's a GPU:
+                # 0x0300xx = VGA controller
+                # 0x0302xx = 3D controller (common for datacenter GPUs)
+                if device_class.startswith('0x0300') or device_class.startswith('0x0302'):
+                    gpu_count += 1
+
+            except (OSError, IOError):
+                # Skip devices we can't read (permissions, etc.)
+                continue
+
+        return gpu_count
 
     @classmethod
     def get_throttle_reasons(cls, clock_reason):

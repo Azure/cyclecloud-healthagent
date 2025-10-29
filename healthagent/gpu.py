@@ -28,8 +28,8 @@ class GpuHealthChecks:
         # TODO: Move this to config file
         self.test_mode = os.getenv('DCGM_TEST_MODE', 'false').lower() == 'true'
 
-        # Right now we are only looking for nvidia devices.
-        if not os.path.exists("/dev/nvidia0"):
+        os_gpu_count = Wrap.count_os_gpu_devices()
+        if os_gpu_count == 0:
             log.info("GPU devices not found, skipping GPU checks")
             raise GpuNotFoundException("No Gpu's Found, Skipping GPU HealthChecks")
         try:
@@ -94,9 +94,22 @@ class GpuHealthChecks:
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
+    @Scheduler.periodic(120)
+    async def gpu_count_check(self):
+
+        report = HealthReport()
+        pci_gpu_count = Wrap.count_pci_gpu_devices()
+        os_gpu_count = Wrap.count_os_gpu_devices()
+        if os_gpu_count != pci_gpu_count:
+            report.status = HealthStatus.ERROR
+            report.details = f"OS shows {os_gpu_count} GPU devices, PCI Bus shows {pci_gpu_count} GPU devices"
+            report.description = "GPU Count Mismatch"
+        await self.reporter.update_report(name="GPUCountMismatch", report=report)
+
     async def create(self):
         await self.reporter.clear_all_errors()
         log.debug("Adding periodic background healthchecks")
+        Scheduler.add_task(self.gpu_count_check)
         Scheduler.add_task(self.run_background_healthchecks)
 
     async def handle_policy_violation(self, callbackresp):
