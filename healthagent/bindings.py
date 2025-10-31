@@ -2,9 +2,12 @@ from ctypes import *
 import os
 import sys
 import re
+import types
 import asyncio
 from pathlib import Path
 from healthagent.reporter import HealthStatus
+import logging
+
 DCGM_VERSION = os.getenv("DCGM_VERSION")
 
 try:
@@ -12,7 +15,6 @@ try:
         print("DCGM version is less than 4.0.0, which is not supported.")
         raise ImportError("Unsupported DCGM version")
     bind_path = "/usr/share/datacenter-gpu-manager-4/bindings/python3"
-
     sys.path.append(bind_path)
     import pydcgm
     from dcgm_structs import dcgmExceptionClass
@@ -21,8 +23,25 @@ try:
     import dcgm_agent
     import dcgmvalue
     import DcgmFieldGroup
+    #TODO: Remove this section when the upstream change is fixed.
+    # This is to resolve a bug in DCGM due to a bad import in python bindings.
+    # Without this the import of DcgmDiag fails.
+    # https://github.com/NVIDIA/DCGM/issues/262
+    _m = types.ModuleType("logger")
+    _log = logging.getLogger('healthagent')
+
+    # Direct method mapping
+    _m.info = _log.info
+    _m.debug = _log.debug
+    _m.warning = _log.warning
+    _m.error = _log.error
+    _m.critical = _log.critical
+
+    _m.nvvs_trace_log_filename = None
+    sys.modules["logger"] = _m
+    import DcgmDiag
 except:
-    raise ImportError("Unable to find dcgm python binding, is PYTHONPATH set properly?")
+    raise ImportError("Unable to find or import dcgm python binding, is PYTHONPATH set properly?")
 
 def create_c_callback(func: callable, loop: asyncio.BaseEventLoop):
     @CFUNCTYPE(None, POINTER(dcgm_structs.c_dcgmPolicyCallbackResponse_v2), c_uint64)

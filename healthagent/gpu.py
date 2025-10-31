@@ -5,6 +5,8 @@ import time
 import logging
 import os
 from time import time
+import shutil
+from datetime import datetime
 from healthagent import epilog,status
 from healthagent.scheduler import Scheduler
 from dataclasses import asdict
@@ -334,7 +336,7 @@ def run_active_healthchecksv2():
     These checks do require exclusive access to the GPU's and cannot
     be run alongside jobs.
     """
-    DIAG_LEVEL=dcgm_structs.DCGM_DIAG_LVL_MED
+
     isHealthy = True
     report = HealthReport()
     custom_fields = {}
@@ -342,8 +344,41 @@ def run_active_healthchecksv2():
     failures = list()
     info_msgs = list()
     try:
+        #TODO: Find a better way to get this directory later.
+        log_dir = "/opt/healthagent"
+        # Primary nvvs log
+        diag_log = os.path.join(log_dir, "nvvs_diag.log")
+
         dcgmGroup, dcgmHandle = Wrap.connect(grp_name="epilog")
-        response = dcgmGroup.action.RunDiagnostic(DIAG_LEVEL)
+        gpu_ids = dcgmGroup.GetGpuIds()
+        params = "memory.minimum_allocation_percentage=90;memory.is_allowed=true"
+        #TODO: Later we can make this list come based on background health check errors. For example, only run pcie test if we detected pcie issues.
+        tests = "memory,pcie"
+        dd = DcgmDiag.DcgmDiag(gpuIds=gpu_ids, testNamesStr=tests, paramsStr=params)
+
+        if os.path.exists(log_dir):
+            # Rotate if file is too large ( > 50MB)
+            try:
+                if os.path.exists(diag_log):
+                    size_mb = os.path.getsize(diag_log) / (1024 * 1024)
+                    if size_mb > 50:
+                        # Rotate existing logs
+                        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+                        rotated_name = os.path.join(log_dir, f"nvvs_diag.log.{timestamp}")
+                        shutil.move(diag_log, rotated_name)
+            except Exception as e:
+                # if we cant rotate logs, run diagnostics without it.
+                pass
+            else:
+                dd.SetDebugLogFile(diag_log)
+                #FATAL,ERROR,WARN,INFO,DEBUG
+                dd.SetDebugLevel(5)
+        # Helps exit the test early if there are failures.
+        # TODO: Make this configurable later. For most part we want epilog to run as quickly as possible but sometimes
+        # we might need exhaustive coverage.
+        dd.SetFailEarly()
+        response = dd.Execute(handle=dcgmHandle.handle)
+
     except Wrap.DcgmConnectionFail as e:
         failures.append("Could not connect to DCGM, is nvidia-dcgm service running?")
         report = HealthReport(status=HealthStatus.WARNING, description="Test not performed",
