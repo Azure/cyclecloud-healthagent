@@ -77,8 +77,13 @@ class GpuHealthChecks:
         # TODO: Add more fields to watch fields in addition to policy fields
         # but for now just add policy fields.
         self.watch_fields = Wrap.get_fields()
-        self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=self.watch_fields)
-        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=3600.00, maxKeepSamples=0)
+        self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group_instant", fieldIds=self.watch_fields)
+        # UpdateFreq is in microseconds. So we are updating every 1 second.
+        # MaxKeepAge:  is how long samples are stored in memory, in seconds. 0 means maxkeepsamples enforces the bounds.
+        # maxkeepsamples: how many samples are stored in DCGM Cache. For this particular field group, we only ever read the latest value. See function track_fields.
+        # Storing last 10 samples (or last 10 seconds of data) is more than enough and effectively  bounds the memory.
+        # If we need historical trending for a field group we will create a new field group with appropriate retention policies.
+        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=0, maxKeepSamples=10)
         ## Add the health watches
         self.dcgmGroup.health.Set(Wrap.get_health_mask())
 
