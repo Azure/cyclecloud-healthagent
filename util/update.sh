@@ -74,7 +74,7 @@ if [[ ! -s avail_hosts.txt ]]; then
 fi
 
 echo "Downloading healthagent tarball..."
-if ! curl -LO https://github.com/Azure/cyclecloud-healthagent/releases/download/1.0.4-pre-release/healthagent-1.0.4.tar.gz; then
+if ! curl -LO https://github.com/Azure/cyclecloud-healthagent/releases/download/1.0.4/healthagent-1.0.4.tar.gz; then
     echo "Error: Failed to download healthagent tarball"
     exit 1
 fi
