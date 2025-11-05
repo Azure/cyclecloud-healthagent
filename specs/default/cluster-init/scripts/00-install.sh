@@ -13,17 +13,34 @@ PACKAGE="healthagent-$HEALTHAGENT_VERSION.tar.gz"
 DCGM_VERSION="4.2.3"
 
 
+# Check if OS is supported before proceeding
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+    VERSION_ID=$VERSION_ID
+    if [[ "$OS" != "almalinux" && "$OS" != "ubuntu" ]]; then
+        echo "Unsupported operating system: $OS. HealthAgent only supports AlmaLinux and Ubuntu. Exiting."
+        exit 0
+    fi
+else
+    echo "Cannot detect the operating system. Exiting."
+    exit 0
+fi
+
+# Check if CycleCloud jetpack is available
+if [ ! -f /opt/cycle/jetpack/bin/jetpack ]; then
+    echo "CycleCloud jetpack not found at /opt/cycle/jetpack/bin/jetpack. Exiting."
+    exit 0
+fi
+
+disable_healthagent=$(/opt/cycle/jetpack/bin/jetpack config cyclecloud.healthagent.disable False)
+if [ "$disable_healthagent" == "True" ]; then
+    echo "Healthagent is disabled"
+    exit 0
+fi
+
 setup_venv() {
     set -x
-
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-        VERSION_ID=$VERSION_ID
-    else
-        echo "Cannot detect the operating system."
-        exit 1
-    fi
 
     if [ "$OS" == "almalinux" ]; then
         echo "Detected AlmaLinux. Installing Python 3.12..."
@@ -38,11 +55,11 @@ setup_venv() {
     elif [ "$OS" == "ubuntu" ] && [ "$VERSION_ID" == "22.04" ]; then
         echo "Detected Ubuntu 22.04. Installing Python 3.11..."
         apt update
-        # We need python dev headers and systemd dev headers for same reaosn mentioned above.
+        # We need python dev headers and systemd dev headers for same reason mentioned above.
         apt install -y python3.11 python3.11-venv python3.11-dev
         apt install -y pkg-config gcc libsystemd-dev
         PYTHON_BIN="/usr/bin/python3.11"
-    elif [ "$OS" == "ubuntu" ] && [[ $VERSION =~ ^24\.* ]]; then
+    elif [ "$OS" == "ubuntu" ] && [[ "$VERSION_ID" =~ ^24\.* ]]; then
         echo "Detected Ubuntu 24. Installing Python 3.12..."
         apt update
         apt install -y python3.12 python3.12-venv python3.12-dev
@@ -50,7 +67,6 @@ setup_venv() {
         PYTHON_BIN="/usr/bin/python3.12"
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
-        # dont exit 0
         exit 0
     fi
     # Create the virtual environment
@@ -87,16 +103,6 @@ setup_dcgm() {
     set -x
 
     echo "Setting up DCGM (Datacenter GPU Manager)..."
-
-    # Detect the operating system
-    if [ -f /etc/os-release ]; then
-        . /etc/os-release
-        OS=$ID
-        VERSION_ID=$VERSION_ID
-    else
-        echo "Cannot detect the operating system."
-        exit 1
-    fi
 
     # Define the minimum required version
     REQUIRED_VERSION="4.2.3"
@@ -200,8 +206,8 @@ mkdir -p $HEALTHAGENT_DIR
     setup_venv || exit 1
     download_install_healthagent || exit 1
     # Check if gpu's exist
-    if nvidia-smi -L > /dev/null 2>&1; then
-        echo "NVIDIA GPU is present and nvidia-smi is working"
+    if [ -e "/dev/nvidia0" ]; then
+        echo "NVIDIA GPU is present"
         setup_dcgm || exit 1
     fi
     setup_systemd || exit 1
