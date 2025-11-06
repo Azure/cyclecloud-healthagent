@@ -19,7 +19,7 @@ ELAPSED_TIME=0
 SLEEP_INTERVAL=2
 
 while [ $ELAPSED_TIME -lt $MAX_TOTAL_TIME ]; do
-    VERSION=$(health -v 2>/dev/null || echo "")
+    VERSION=$(health -v 2>/dev/null |  tr -d '"'  || echo "")
 
     if [ "$VERSION" == "$EXPECTED_VERSION" ]; then
         echo "Health version $EXPECTED_VERSION confirmed after ${ELAPSED_TIME}s!"
