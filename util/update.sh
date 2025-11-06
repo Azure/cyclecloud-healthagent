@@ -106,6 +106,6 @@ sudo install -o root -g root -m 0755 /etc/healthagent/health.sh.example /sched/$
 sudo mv /sched/$CLUSTERNAME/health.sh.tmp /sched/$CLUSTERNAME/health.sh
 echo "Updated SlurmHealthProgram"
 echo "Running update on login nodes"
-parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" "sudo $(pwd)/update_healthagent.sh"
+parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
 echo "Running update on remote hosts..."
-parallel-ssh -h avail_hosts.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" "sudo $(pwd)/update_healthagent.sh"
+parallel-ssh -h avail_hosts.txt -t 300 -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
