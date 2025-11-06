@@ -39,7 +39,7 @@ sudo vim /etc/slurm/slurm.conf
 ```
 Comment out healthcheckprogram,Healthcheckinterval.
 ```
-scontrol reconfigure
+sudo scontrol reconfigure
 ```
 
 ### Upgrade Healthagent
