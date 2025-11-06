@@ -62,6 +62,19 @@ fi
 
 mkdir -p ~/$workdir
 cd $workdir
+
+if ! sudo /opt/azurehpc/slurm/venv/bin/azslurm debug_cluster_status --nodes > cluster.json; then
+    echo "Could not get cluster status"
+    exit 1
+fi
+
+echo "Getting list of login nodes"
+
+if ! cat cluster.json | jq -r '.nodes[] | select(.Hostname | contains("login")) | select(.Status == "Ready") | .Hostname' > login_nodes.txt; then
+    echo "Failed to get login nodes"
+    exit 1
+fi
+
 echo "Getting list of Slurm nodes..."
 if ! sudo /opt/azurehpc/slurm/venv/bin/azslurm nodes --output-columns name -F table_headerless > avail_hosts.txt; then
     echo "Error: Failed to get list of Slurm nodes"
@@ -92,5 +105,7 @@ sudo $(pwd)/update_healthagent.sh
 sudo install -o root -g root -m 0755 /etc/healthagent/health.sh.example /sched/$CLUSTERNAME/health.sh.tmp
 sudo mv /sched/$CLUSTERNAME/health.sh.tmp /sched/$CLUSTERNAME/health.sh
 echo "Updated SlurmHealthProgram"
+echo "Running update on login nodes"
+parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" "sudo $(pwd)/update_healthagent.sh"
 echo "Running update on remote hosts..."
 parallel-ssh -h avail_hosts.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR" "sudo $(pwd)/update_healthagent.sh"
