@@ -36,7 +36,7 @@ manage_node_state() {
 
 
 if ! output=$(/usr/bin/health -b); then
-    # if we cannot get status from healthagent, dont do anything.
+    # if we cannot get status from healthagent, don't do anything.
     exit 0
 fi
 errors=$(($(get_gpu_errors "$output") + $(get_network_errors "$output")))
