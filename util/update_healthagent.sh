@@ -9,6 +9,11 @@ install -o root -g root -m 0644 "$SCRIPT_DIR/healthagent-1.0.4.tar.gz" /opt/heal
 source /opt/healthagent/.venv/bin/activate
 /opt/healthagent/.venv/bin/pip install --force-reinstall /opt/healthagent/healthagent-1.0.4.tar.gz >/dev/null 2>&1
 /opt/healthagent/.venv/bin/healthagent-install >/dev/null 2>&1
+if [[ -f /opt/healthagent/.install ]]; then
+    rm /opt/healthagent/.install
+fi
+
+echo "HEALTHAGENT_INSTALLED_VERSION=1.0.4" > /opt/healthagent/.install
 deactivate
 systemctl restart healthagent
 
