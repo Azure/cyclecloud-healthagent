@@ -18,8 +18,8 @@ if [ -f /etc/os-release ]; then
     . /etc/os-release
     OS=$ID
     VERSION_ID=$VERSION_ID
-    if [[ "$OS" != "almalinux" && "$OS" != "ubuntu" ]]; then
-        echo "Unsupported operating system: $OS. HealthAgent only supports AlmaLinux and Ubuntu. Exiting."
+    if [[ "$OS" != "almalinux" && "$OS" != "ubuntu" && "$OS" != "rhel" ]]; then
+        echo "Unsupported operating system: $OS. HealthAgent only supports AlmaLinux, Ubuntu and RHEL. Exiting."
         exit 0
     fi
 else
@@ -65,6 +65,10 @@ setup_venv() {
         apt install -y python3.12 python3.12-venv python3.12-dev
         apt install -y pkg-config gcc libsystemd-dev
         PYTHON_BIN="/usr/bin/python3.12"
+    elif [ "$OS" == "rhel" ]; then
+        echo "Detected RHEL, using system python3..."
+        yum install -y python3-devel pkg-config gcc systemd-devel
+        PYTHON_BIN="/usr/bin/python3"
     else
         echo "Unsupported operating system: $OS $VERSION_ID"
         exit 0
@@ -119,7 +123,7 @@ setup_dcgm() {
     # Compare the installed version with the required version
     if [ -z "$INSTALLED_VERSION" ] || [ "$(printf '%s\n' "$REQUIRED_VERSION" "$INSTALLED_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
         echo "DCGM version is older than $REQUIRED_VERSION or not installed. Installing the latest package..."
-        if [ "$OS" == "almalinux" ]; then
+        if [ "$OS" == "almalinux" ] || [ "$OS" == "rhel" ]; then
             yum install --allowerasing -y datacenter-gpu-manager-4-core
             yum install --allowerasing -y datacenter-gpu-manager-4-cuda12
         elif [ "$OS" == "ubuntu" ]; then
