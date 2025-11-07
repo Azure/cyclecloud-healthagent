@@ -2,6 +2,18 @@
 
 set -eo pipefail
 
+get_failed_hosts() {
+    local log_file="$1"
+
+    if [ ! -f "$log_file" ]; then
+        echo "Log file not found: $log_file" >&2
+        return 1
+    fi
+
+    # Extract hostnames from lines containing "[FAILURE]"
+    grep '\[FAILURE\]' "$log_file" | awk '{print $4}' | sort -u
+}
+
 install_parallel_ssh() {
     local package_name="pssh"
 
@@ -108,4 +120,13 @@ echo "Updated SlurmHealthProgram"
 echo "Running update on login nodes"
 parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
 echo "Running update on remote hosts..."
-parallel-ssh -h avail_hosts.txt -t 300 -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
+parallel-ssh -h avail_hosts.txt -t 300 -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh" | tee $(pwd)/run.log
+failed_hosts=$(get_failed_hosts "$(pwd)/run.log")
+if [ -n "$failed_hosts" ]; then
+    echo "FAILED_HOSTS"
+    echo "$failed_hosts"
+    echo "$failed_hosts" > $(pwd)/failed_hosts.txt
+    exit 1
+else
+    echo "All Hosts updated successfully"
+fi
