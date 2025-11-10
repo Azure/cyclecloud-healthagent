@@ -111,14 +111,14 @@ if ! curl -LO https://raw.githubusercontent.com/Azure/cyclecloud-healthagent/ref
 fi
 
 chmod +x update_healthagent.sh
-echo "Running update on current node $(/bin/hostname)"
+#echo "Running update on current node $(/bin/hostname)"
 
-sudo $(pwd)/update_healthagent.sh
-sudo install -o root -g root -m 0755 /etc/healthagent/health.sh.example /sched/$CLUSTERNAME/health.sh.tmp
-sudo mv /sched/$CLUSTERNAME/health.sh.tmp /sched/$CLUSTERNAME/health.sh
-echo "Updated SlurmHealthProgram"
-echo "Running update on login nodes"
-parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
+#sudo $(pwd)/update_healthagent.sh
+#sudo install -o root -g root -m 0755 /etc/healthagent/health.sh.example /sched/$CLUSTERNAME/health.sh.tmp
+#sudo mv /sched/$CLUSTERNAME/health.sh.tmp /sched/$CLUSTERNAME/health.sh
+#echo "Updated SlurmHealthProgram"
+#echo "Running update on login nodes"
+#parallel-ssh -h login_nodes.txt -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh"
 echo "Running update on remote hosts..."
 parallel-ssh -h avail_hosts.txt -t 300 -i -x "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=10" "sudo $(pwd)/update_healthagent.sh" | tee $(pwd)/run.log
 failed_hosts=$(get_failed_hosts "$(pwd)/run.log")
