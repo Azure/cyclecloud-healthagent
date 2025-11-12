@@ -41,6 +41,7 @@ fi
 
 setup_venv() {
     set -x
+    set -e
 
     if [ "$OS" == "almalinux" ]; then
         echo "Detected AlmaLinux. Installing Python 3.12..."
@@ -86,6 +87,7 @@ setup_venv() {
 download_install_healthagent() {
 
     set -x
+    set -e
 
     cd $HEALTHAGENT_DIR
     # Check if the package already exists and delete it if it does
@@ -98,13 +100,23 @@ download_install_healthagent() {
     /opt/cycle/jetpack/bin/jetpack download --project healthagent $PACKAGE
     echo "Installing healthagent package..."
     source $VENV_DIR/bin/activate
-    pip install --force-reinstall $PACKAGE
+    if ! pip install --force-reinstall $PACKAGE; then
+        echo "ERROR: Failed to install $PACKAGE"
+        deactivate || true
+        exit 1
+    fi
     # Copy the "health" script to /usr/bin
-    healthagent-install
+    if ! healthagent-install; then
+        echo "ERROR: Failed to run healthagent-install"
+        deactivate || true
+        exit 1
+    fi
+
     deactivate
 }
 setup_dcgm() {
     set -x
+    set -e
 
     echo "Setting up DCGM (Datacenter GPU Manager)..."
 
@@ -154,6 +166,7 @@ setup_dcgm() {
 
 setup_systemd() {
     set -x
+    set -e
 
     # Create the systemd service file
     echo "Creating systemd service file at $SERVICE_FILE..."
