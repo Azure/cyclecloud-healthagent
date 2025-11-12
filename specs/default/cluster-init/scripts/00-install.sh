@@ -41,7 +41,6 @@ fi
 
 setup_venv() {
     set -x
-    set -e
 
     if [ "$OS" == "almalinux" ]; then
         echo "Detected AlmaLinux. Installing Python 3.12..."
@@ -87,8 +86,6 @@ setup_venv() {
 download_install_healthagent() {
 
     set -x
-    set -e
-
     cd $HEALTHAGENT_DIR
     # Check if the package already exists and delete it if it does
     if [ -f "$PACKAGE" ]; then
@@ -116,7 +113,6 @@ download_install_healthagent() {
 }
 setup_dcgm() {
     set -x
-    set -e
 
     echo "Setting up DCGM (Datacenter GPU Manager)..."
 
@@ -166,7 +162,6 @@ setup_dcgm() {
 
 setup_systemd() {
     set -x
-    set -e
 
     # Create the systemd service file
     echo "Creating systemd service file at $SERVICE_FILE..."
@@ -220,14 +215,14 @@ mkdir -p $HEALTHAGENT_DIR
     fi
 
 
-    setup_venv || exit 1
-    download_install_healthagent || exit 1
+    setup_venv
+    download_install_healthagent
     # Check if gpu's exist
     if [ -e "/dev/nvidia0" ]; then
         echo "NVIDIA GPU is present"
-        setup_dcgm || exit 1
+        setup_dcgm
     fi
-    setup_systemd || exit 1
+    setup_systemd
     echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
     if ! systemctl restart healthagent; then
         echo "Failed to restart healthagent service. Please check the service configuration and logs."
