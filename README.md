@@ -174,6 +174,190 @@ And then `health -s` should show the injected values:
 
 [DCGM Test Injection Framework](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/dcgm-error-injection.html#error-injection-workflow)
 
+### System Software Monitoring
+
+Healthagent monitors critical systemd services using D-Bus to detect explicit service failures in real-time. This monitoring is *not* a liveness check - normal service start/stop operations are ignored. Only explicit failures trigger health status changes.
+
+**Monitored Services:**
+
+The following services are monitored by default:
+
+| Category | Services | Condition |
+|----------|----------|-----------|
+| **Slurm Services** | `munge.service`, `slurmd.service`, `slurmctld.service`, `slurmdbd.service`, `slurmrestd.service` | Always monitored |
+| **NVIDIA GPU Services** | `nvidia-imex.service`, `nvidia-dcgm.service`, `nvidia-persistenced.service` | When GPUs are present |
+
+Services are added to monitoring at startup. If a service is not loaded on the node, it is automatically ignored. When a previously-ignored service is later loaded by systemd, monitoring is automatically enabled through the D-Bus `UnitNew` event handler.
+
+**Failure Detection:**
+
+The systemd monitor tracks state transitions asynchronously via D-Bus property change signals. It specifically watches for:
+- `active` → `failed` transition: Indicates service crash or explicit failure
+- `inactive` → `failed` transition: Indicates service failed during activation
+
+Transient states like `activating` and `deactivating` are ignored since they don't represent actual failures.
+
+**Response to Failures:**
+
+When a service enters the `failed` state, healthagent:
+1. Changes the service health status from `OK` to `ERROR`
+2. Captures the last 10 lines of journal logs for the failed service
+3. Updates the health report with:
+   - Status: `Error`
+   - Description: `<service-name> Service unhealthy`
+   - Details: Recent journal entries showing the failure context
+4. Reports the failure to CycleCloud (if enabled)
+
+Example failure response:
+```json
+{
+  "systemd": {
+    "slurmd.service": {
+      "status": "Error",
+      "message": "slurmd.service reports errors",
+      "description": "slurmd.service Service unhealthy",
+      "details": "[2025-08-07 19:43:50] slurmd: error: Node configuration differs...\n[2025-08-07 19:43:50] slurmd: fatal: Unable to register...",
+      "last_update": "2025-08-07T19:43:50 UTC"
+    }
+  }
+}
+```
+
+**Recovery Detection:**
+
+When a previously failed service transitions from `failed` → `active` (with substate `running`), healthagent:
+1. Changes the service health status from `ERROR` back to `OK`
+2. Clears the error details
+3. Updates the health report timestamp
+4. Reports the recovery to CycleCloud (if enabled)
+
+This automatic recovery detection ensures that nodes return to healthy status once services are successfully restarted, without requiring manual intervention.
+
+### Kernel Message Monitoring
+
+Healthagent continuously monitors kernel messages from `/dev/kmsg` to detect critical system-level issues that may indicate hardware failures, driver problems, or severe system conditions. This monitoring runs asynchronously and captures severe kernel events as they occur in real-time.
+
+**Monitored Severity Levels:**
+
+The kernel message monitor only triggers alerts for the most critical kernel log levels:
+
+| Level | Kernel Constant | Description |
+|-------|-----------------|-------------|
+| 0 | `KERN_EMERG` | Emergency - System is unusable |
+| 1 | `KERN_ALERT` | Alert - Action must be taken immediately |
+| 2 | `KERN_CRIT` | Critical - Critical conditions detected |
+
+**Monitoring Behavior:**
+
+- **Asynchronous Capture**: Uses non-blocking I/O with an event loop to read `/dev/kmsg` continuously without impacting system performance
+- **Time-Based Filtering**: Only reports messages from the last hour, ignoring older kernel messages
+- **Auto-Clearing**: Automatically clears error reports every 5 minutes if no new critical messages have been received in the past hour
+- **Message Accumulation**: Collects all critical messages during a monitoring period and includes them in a single detailed report
+
+**Response to Critical Kernel Messages:**
+
+When critical kernel messages (levels 0-2) are detected, healthagent:
+1. Sets the health status to `WARNING`
+2. Creates a detailed report containing:
+   - Status: `Warning`
+   - Message: `KernelMonitor Detected Alerts`
+   - Description: `Kernel Log Monitor reports Critical/Emergency Alerts`
+   - Details: Formatted list of all detected kernel messages with timestamps
+3. Reports the issue to CycleCloud (if enabled)
+
+Example kernel message alert:
+```json
+{
+  "kmsg": {
+    "KernelMonitor": {
+      "status": "Warning",
+      "message": "KernelMonitor Detected Alerts",
+      "description": "Kernel Log Monitor reports Critical/Emergency Alerts",
+      "details": "2025-08-07T19:43:50 UTC - KERNEL CRITICAL - Hardware error detected\n2025-08-07T19:43:51 UTC - KERNEL ALERT - Memory corruption detected",
+      "last_update": "2025-08-07T19:43:51 UTC"
+    }
+  }
+}
+```
+
+### Network Interface Monitoring
+
+Healthagent monitors physical network interfaces to detect link failures, flapping, and operational state issues. This monitoring focuses on physical hardware interfaces (Ethernet and InfiniBand) and excludes virtual interfaces to avoid false alerts from expected virtual network behavior.
+
+**Monitored Interface Types:**
+
+The network monitor tracks the following physical interface types:
+
+| Interface Type | Description |
+|----------------|-------------|
+| Ethernet | Standard Ethernet network adapters |
+| InfiniBand | High-performance InfiniBand HPC fabrics |
+
+Virtual interfaces (such as bridges, VLAN interfaces, and container networks) are automatically excluded from monitoring.
+
+**Monitoring Behavior:**
+
+- **Periodic Checks**: Runs every 60 seconds to sample network interface state
+- **Sliding Window Analysis**: Tracks link down events over a 60-sample window to calculate link flap rates
+- **Physical Interfaces Only**: Automatically filters out virtual interfaces by checking sysfs device paths
+- **Auto-Clearing**: Automatically clears error reports when interfaces return to healthy operational state
+
+**Alert Conditions:**
+
+The network monitor triggers alerts based on two conditions:
+
+1. **Link Flapping (WARNING)**: When an interface goes down 1 or more times per hour
+   - Status: `Warning`
+   - Indicates unstable network connectivity that may impact workloads
+   - Includes `link_down_rate_per_hour` metric in custom fields
+
+2. **Interface Not Operational (ERROR)**: When an interface is not in the `up` operational state
+   - Status: `Error`
+   - Indicates a critical network failure or misconfiguration
+   - Reports the current operational state (down, lowerlayerdown, etc.)
+
+**Response to Network Issues:**
+
+When network problems are detected, healthagent:
+1. Sets appropriate health status (`WARNING` for flapping, `ERROR` for down interfaces)
+2. Creates a detailed report with:
+   - List of affected interfaces
+   - Specific error conditions for each interface
+   - Link flap rates and state transition counts
+   - Current carrier and operational states
+3. Includes per-interface custom fields:
+   - `link_down_rate_per_hour`: Recent link failure rate
+   - `link_flap_since_uptime`: Total link state transitions since boot
+   - `error_count`: Number of errors for the interface
+   - `carrier`: Physical link status
+4. Reports the issue to CycleCloud (if enabled)
+
+Example network interface alert:
+```json
+{
+  "network": {
+    "Network": {
+      "status": "Error",
+      "message": "Network reports errors",
+      "description": "Network interfaces eth0,ib0 are not operational",
+      "details": "Network interface eth0 is not operational and in state down.\nNetwork interface ib0 went down 3 times in the last hour",
+      "last_update": "2025-08-07T19:43:50 UTC",
+      "eth0": {
+        "link_down_rate_per_hour": 0,
+        "link_flap_since_uptime": 2,
+        "error_count": 1,
+        "carrier": "0"
+      },
+      "ib0": {
+        "link_down_rate_per_hour": 3,
+        "link_flap_since_uptime": 15,
+        "error_count": 0
+      }
+    }
+  }
+}
+```
+
 ### CycleCloud Integration
 
 Healthagent reports status of the nodes to CycleCloud via `jetpack`. This can be explicitly disabled by setting `PUBLISH_CC` to `False`. Default value is `True`. Additionally if healthagent is unable to find jetpack binary, then CC reporting is automatically disabled regardless of the value of the environment variable. The environment variable can be configured in healthagent systemd file.
