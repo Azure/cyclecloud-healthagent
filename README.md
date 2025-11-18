@@ -1,6 +1,22 @@
+
 ## Healthagent for HPC/AI workloads
 
-Healthagent is currently in heavy development and many features are still WIP. New features and updates to existing features will be added here.
+Healthagent is currently in heavy development and many features are still [WIP](#wip). New features and updates to existing features will be added here.
+
+- [Healthagent for HPC/AI workloads](#healthagent-for-hpcai-workloads)
+  - [Core Concepts](#core-concepts)
+  - [Background Health checks](#background-health-checks)
+    - [Fetching results of background health checks](#fetching-results-of-background-health-checks)
+  - [Active Health Checks](#active-health-checks)
+    - [DCGM Test mode](#dcgm-test-mode)
+  - [System Software Monitoring](#system-software-monitoring)
+  - [Kernel Message Monitoring](#kernel-message-monitoring)
+  - [Network Interface Monitoring](#network-interface-monitoring)
+  - [CycleCloud Integration](#cyclecloud-integration)
+  - [WIP](#wip)
+  - [Building healthagent](#building-healthagent)
+  - [Running healthagent](#running-healthagent)
+    - [Developer Setup](#developer-setup)
 
 ### Core Concepts
 
@@ -368,11 +384,12 @@ Environment="PUBLISH_CC=False"
 ```
 
 ### WIP
+** COMING SOON**
+- HealthAgent Configuration 
+- Prolog checks
+- OS-based checks
 
-- configurability of health checks
-- prolog tests
-- OS based checks.
-### Setup
+### Building healthagent
 
 To build:
 
