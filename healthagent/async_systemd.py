@@ -105,7 +105,7 @@ class SystemdMonitor:
                 log.error(report.description)
                 await self.reporter.update_report(name=service, report=report)
             elif active_state == "active" and substate == "running":
-                if self.state.get(service) == "failed":
+                if self.state.get(service) in ("failed", "inactive"):
                     log.info(f"{service} Service Healthy")
                     report.status = HealthStatus.OK
                     await self.reporter.update_report(name=service, report=report)
