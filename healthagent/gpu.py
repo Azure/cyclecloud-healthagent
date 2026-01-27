@@ -385,19 +385,13 @@ def run_active_healthchecksv2():
         response = dd.Execute(handle=dcgmHandle.handle)
 
     except Wrap.DcgmConnectionFail as e:
-        failures.append("Could not connect to DCGM, is nvidia-dcgm service running?")
-        report = HealthReport(status=HealthStatus.WARNING, description="Test not performed",
-                              details="Active diagnostics not performed.\nIs nvidia-dcgm service running?")
+        failures.append(str(e))
+        report = HealthReport(status=HealthStatus.WARNING, description="Active Tests not performed",
+                              details=f"Active diagnostics not performed.\n {e}")
         return report
-    except dcgmExceptionClass(dcgm_structs.DCGM_ST_NOT_CONFIGURED):
-        failures.append("One of the GPUs on your system is not supported by NVVS")
-    except dcgmExceptionClass(dcgm_structs.DCGM_ST_GROUP_INCOMPATIBLE):
-        failures.append("GPUs in the group are not compatible with each other for running diagnostics")
-    except dcgmExceptionClass(dcgm_structs.DCGM_ST_NVVS_ERROR) as e:
-        if not Wrap.should_ignore_error(e):
-            raise(e)
-        else:
-            failures.append(str(e))
+    except dcgm_structs.DCGMError as e:
+        failures.append(str(e))
+
     test_types = set()
     if response.numErrors > 0:
         isHealthy = False

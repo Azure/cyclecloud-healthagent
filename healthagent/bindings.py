@@ -16,13 +16,6 @@ try:
         raise ImportError("Unsupported DCGM version")
     bind_path = "/usr/share/datacenter-gpu-manager-4/bindings/python3"
     sys.path.append(bind_path)
-    import pydcgm
-    from dcgm_structs import dcgmExceptionClass
-    import dcgm_structs
-    import dcgm_fields
-    import dcgm_agent
-    import dcgmvalue
-    import DcgmFieldGroup
     #TODO: Remove this section when the upstream change is fixed.
     # This is to resolve a bug in DCGM due to a bad import in python bindings.
     # Without this the import of DcgmDiag fails.
@@ -39,6 +32,13 @@ try:
 
     _m.nvvs_trace_log_filename = None
     sys.modules["logger"] = _m
+    import pydcgm
+    from dcgm_structs import dcgmExceptionClass
+    import dcgm_structs
+    import dcgm_fields
+    import dcgm_agent
+    import dcgmvalue
+    import DcgmFieldGroup
     import DcgmDiag
 except:
     raise ImportError("Unable to find or import dcgm python binding, is PYTHONPATH set properly?")
@@ -328,7 +328,7 @@ class Wrap:
             dcgmSystem = dcgmHandle.GetSystem()
             supportedGPUs = dcgmSystem.discovery.GetAllSupportedGpuIds()
         except Exception as e:
-            raise Wrap.DcgmConnectionFail("Unable to get a DCGM Handle")
+            raise Wrap.DcgmConnectionFail(e)
 
         ## Create an empty group. Let's call the group as "one_gpus_group".
         ## We will add the first supported GPU in the system to this group.
