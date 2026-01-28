@@ -36,6 +36,7 @@ try:
     from dcgm_structs import dcgmExceptionClass
     import dcgm_structs
     import dcgm_fields
+    import dcgm_errors
     import dcgm_agent
     import dcgmvalue
     import DcgmFieldGroup
@@ -238,6 +239,14 @@ class Wrap:
         if system == dcgm_structs.DCGM_HEALTH_WATCH_DRIVER:
             return "Driver"
 
+        if system == dcgm_structs.DCGM_HEALTH_WATCH_NVSWITCH_FATAL:
+            return "Nvswitch"
+
+        if system == dcgm_structs.DCGM_HEALTH_WATCH_NVSWITCH_NONFATAL:
+            return "Nvswitch"
+
+        return "System"
+
     ## Helper method to convert DCGM value to string
     @classmethod
     def convert_value_to_string(cls, value):
@@ -260,7 +269,7 @@ class Wrap:
                 return v.__str__()
 
     @classmethod
-    def convert_overall_health_to_string(cls, health):
+    def convert_health_to_status(cls, health):
         """
         helper method to convert helath return to a string for display purpose
         """
