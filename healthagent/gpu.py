@@ -125,6 +125,7 @@ class GpuHealthChecks:
         report = self.reporter.get_report(health_system) or HealthReport()
         condition = callbackresp.condition
         gpuid = callbackresp.gpuId
+        harmless_xid = [ 43, 63 ]
         try:
             condition_str = Wrap.dcgm_condition_to_string(condition=condition)
         except ValueError as e:
@@ -166,6 +167,11 @@ class GpuHealthChecks:
                 info['xid_error'] = set()
             info['xid_error'].add(callbackresp.val.xid.errnum)
             info['details'] = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
+            # Check if all XIDs are harmless - if so, downgrade to warning
+            if info['xid_error'].issubset(set(harmless_xid)):
+                status = HealthStatus.WARNING
+            else:
+                status = HealthStatus.ERROR
         # elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
         #     status = HealthStatus.WARNING
         #     info['temperature'] = callbackresp.val.thermal.thermalViolation
@@ -263,35 +269,44 @@ class GpuHealthChecks:
             try:
                 details = list()
                 subsystems = set()
+                status = HealthStatus.OK
                 if not self.dcgmGroup:
                     raise Wrap.DcgmInvalidHandle
                 group_health = self.dcgmGroup.health.Check()
-                status = Wrap.convert_overall_health_to_string(group_health.overallHealth)
-                error_count = group_health.incidentCount
+                incident_count = group_health.incidentCount
 
                 field_errors, category = self.track_fields()
                 if len(field_errors) > 0:
                     status = HealthStatus.ERROR
-                if status == HealthStatus.OK and error_count == 0:
+                if status == HealthStatus.OK and incident_count == 0:
                     report = HealthReport()
                     await self.reporter.update_report(name=health_system, report=report)
                     return
-                elif status == HealthStatus.NA:
-                    log.error("Invalid health status received")
-                    return
 
-                for index in range (0, error_count):
+                for index in range (0, incident_count):
                     gpu_id = group_health.incidents[index].entityInfo.entityId
                     system = Wrap.convert_system_enum_to_system_name(group_health.incidents[index].system)
+                    error_code = group_health.incidents[index].error.code
+                    if error_code == dcgm_errors.DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD:
+                        if status != HealthStatus.ERROR:
+                            status = HealthStatus.WARNING
+                    else:
+                        incident_status = Wrap.convert_health_to_status(group_health.incidents[index].health)
+                        if incident_status == HealthStatus.NA:
+                            log.error(f"Invalid health status receieved {system}, {error_code}")
+                        elif incident_status == HealthStatus.ERROR:
+                            status = HealthStatus.ERROR
+                        elif incident_status == HealthStatus.WARNING and status != HealthStatus.ERROR:
+                            status = HealthStatus.WARNING
                     subsystems.add(system)
                     details.append(group_health.incidents[index].error.msg)
 
                 details.extend(field_errors)
                 subsystems.update(category)
-                error_count += len(field_errors)
-                description = f"{health_system} report {status.value} count={error_count} subsystem={', '.join(subsystems)}"
+                incident_count += len(field_errors)
+                description = f"{health_system} report {status.value} count={incident_count} subsystem={', '.join(subsystems)}"
                 custom_fields['categories'] = subsystems
-                custom_fields['error_count'] = error_count
+                custom_fields['error_count'] = incident_count
                 report = HealthReport(status=status,
                                       description=description,
                                       details='\n'.join(details),
@@ -421,7 +436,10 @@ def run_active_healthchecksv2():
         custom_fields['info'] = info_msgs
         report.status = HealthStatus.ERROR
         report.details = "\n".join(failures)
-        report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
+        if test_types:
+            report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
+        else:
+            report.description = "DCGM Epilog failures detected"
         report.message = "GPU Epilog Errors"
         report.custom_fields = custom_fields
 

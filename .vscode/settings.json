@@ -1,9 +1,10 @@
 {   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
 
     "python.autoComplete.extraPaths": [
-        "${workspaceFolder}/.bindings/dcgm-4.2.2/"
+        
+        "${workspaceFolder}/.bindings/dcgm-4.5.0/"
     ],
     "python.analysis.extraPaths": [
-        "${workspaceFolder}/.bindings/dcgm-4.2.2/"
+        "${workspaceFolder}/.bindings/dcgm-4.5.0/"
     ],
 }
