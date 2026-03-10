@@ -89,6 +89,7 @@ def test_make_json_safe_with_custom_class_enum_datetime_set():
 async def test_reporter():
 
     my_reporter = Reporter()
+    my_reporter.publish_cc = True
     # fetch epilog_test report.
     name= 'epilog_test'
     report = my_reporter.get_report(name=name)

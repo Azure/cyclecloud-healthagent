@@ -5,3 +5,7 @@ def epilog(func):
 def status(func):
     func.status = True
     return func
+
+def prolog(func):
+    func.prolog = True
+    return func
