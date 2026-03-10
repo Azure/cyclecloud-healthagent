@@ -1,22 +1,19 @@
 import os
 import asyncio
 import time
-from enum import Enum
-from collections import deque
-from datetime import timedelta, datetime, timezone
-from healthagent import status
-from healthagent.reporter import Reporter, HealthReport, HealthStatus
+from datetime import timedelta, datetime
+from healthagent.reporter import Reporter, HealthStatus
 from healthagent.scheduler import Scheduler
-from functools import partial
+from healthagent.healthmodule import HealthModule
 import logging
 
 log = logging.getLogger(__name__)
 
-class KmsgReader:
+class KmsgReader(HealthModule):
 
     def __init__(self, reporter: Reporter):
 
-        self.reporter = reporter
+        super().__init__(reporter)
         try:
             self.fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
         except Exception as e:
@@ -122,7 +119,3 @@ class KmsgReader:
         report.description = "Kernel Log Monitor reports Critical/Emergency Alerts"
 
         Scheduler.add_task(self.reporter.update_report, self.name, report)
-
-    @status
-    def show_status(self):
-        return self.reporter.summarize()
