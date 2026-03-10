@@ -5,6 +5,7 @@ from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
 from healthagent import status
+from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
 from healthagent.scheduler import Scheduler
 
@@ -107,12 +108,12 @@ class SlidingStore:
 
         return value_diff
 
-class NetworkHealthChecks:
+class NetworkHealthChecks(HealthModule):
 
     def __init__(self, reporter: Reporter, window: int = 60):
 
+        super().__init__(reporter)
         self.sysfs = "/sys/class/net"
-        self.reporter = reporter
         #TODO: Make this and the sampling rate configurable.
         self.timestore = SlidingStore(window=window)
 
@@ -218,10 +219,6 @@ class NetworkHealthChecks:
             log.info("device : %s" % iface.device)
             log.info("carrier_changes : %s" % iface.carrier_changes)
             log.info("carrier_down_count : %s" % iface.carrier_down_count)
-
-    @status
-    def show_status(self):
-        return self.reporter.summarize()
 
     @Scheduler.periodic(60)
     async def run_network_checks(self):

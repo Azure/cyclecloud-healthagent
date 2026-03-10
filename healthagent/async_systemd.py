@@ -1,24 +1,27 @@
-import asyncio
 from dbus_next.aio import MessageBus
 from dbus_next.errors import DBusError
 from dbus_next.constants import BusType
 import logging
 import systemd.journal
-from time import time
-from healthagent import status
+from healthagent.healthmodule import HealthModule
 from healthagent.scheduler import Scheduler
-from healthagent.reporter import Reporter,HealthReport,HealthStatus
+from healthagent.reporter import Reporter, HealthReport, HealthStatus
 
 log = logging.getLogger('healthagent')
-class SystemdMonitor:
 
+class SystemdMonitor(HealthModule):
+    """
+    Monitors the state of systemd services and reports unhealthy services based on their state.
+    Purpose of this healthcheck is NOT to report any errors in a systemd service but only when the service reaches
+    a failed state or recovers from the failed state.
+    """
 
     def __init__(self, reporter: Reporter):
+        super().__init__(reporter)
         self.state = dict()
         self.bus = None
         self.manager = None
         self.unit_paths = set()
-        self.reporter = reporter
         self.services_not_enabled = list()
 
 
@@ -63,6 +66,7 @@ class SystemdMonitor:
                     await self.__add_handler(unit_name=unit_name, service=service)
                 except Exception as e:
                     log.error(e)
+
     def get_journal_entries(self, service_name):
         """Prints the last `num_entries` lines of journal logs for a given systemd service."""
         num_entries = 10
@@ -156,7 +160,3 @@ class SystemdMonitor:
             except Exception as e:
                 log.exception(e)
                 raise
-
-    @status
-    def show_status(self):
-        return self.reporter.summarize()
