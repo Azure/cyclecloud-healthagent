@@ -271,7 +271,7 @@ class Wrap:
     @classmethod
     def convert_health_to_status(cls, health):
         """
-        helper method to convert helath return to a string for display purpose
+        helper method to convert health return to a string for display purpose
         """
         if health == dcgm_structs.DCGM_HEALTH_RESULT_PASS:
             return HealthStatus.OK

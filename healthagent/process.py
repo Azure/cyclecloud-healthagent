@@ -138,7 +138,7 @@ class ProcessMonitor(HealthModule):
 
         # PID space critically consumed — fork bomb aftermath or runaway leak
         if pid_usage_pct >= self.PID_SATURATION_PCT:
-            report.status = HealthStatus.ERROR
+            report.escalate(HealthStatus.ERROR)
             report.description = "Critical PID table saturation by zombie processes"
             report.recommendations = "Node Reboot required"
             msgs.append(f"Zombie processes consuming {pid_usage_pct:.1f}% of PID space "
@@ -146,14 +146,14 @@ class ProcessMonitor(HealthModule):
 
         # High zombie count relative to node size
         elif zombie_count >= self.zombie_warn_threshold:
-            report.status = HealthStatus.WARNING
+            report.escalate(HealthStatus.WARNING)
             report.description = "Zombie processes found in the pid table"
             msgs.append(f"Zombie Processes found: {zombie_count} "
                         f"(threshold: {self.zombie_warn_threshold}, "
                         f"pid_max: {self.pid_max})")
 
         if hungprocs:
-            report.status = HealthStatus.ERROR
+            report.escalate(HealthStatus.ERROR)
             msgs.append(f"Unkillable Processes found: {len(hungprocs)}")
             for pid, proc, user, wchan in hungprocs:
                 msgs.append(f"PID: {pid}\tProcess: {proc}\tUser: {user}\tBlocked on: {wchan}")

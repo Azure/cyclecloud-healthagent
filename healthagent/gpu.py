@@ -147,49 +147,50 @@ class GpuHealthChecks(HealthModule):
             vd[gpuid] = {}
 
         info = vd[gpuid]
-        status = HealthStatus.ERROR
         if condition == dcgm_structs.DCGM_POLICY_COND_DBE:
             if 'location' not in info:
                 info['location'] = set()
             info['location'].add(next(key for key, value in dcgm_structs.c_dcgmPolicyConditionDbe_t.LOCATIONS.items() if value == callbackresp.val.dbe.location))
             info['numerrors'] = callbackresp.val.dbe.numerrors
             info['details'] = f"Double-Bit ECC errors({info['numerrors']}) found at location: {info['location']} on GPU: {gpuid}"
+            report.escalate(HealthStatus.ERROR)
         elif condition == dcgm_structs.DCGM_POLICY_COND_PCI:
             info['replay_count'] = callbackresp.val.pci.counter
             info['details'] = f"PCI replay count({info['replay_count']}) on GPU: {gpuid}"
+            report.escalate(HealthStatus.ERROR)
         elif condition == dcgm_structs.DCGM_POLICY_COND_NVLINK:
             info['error_count'] = callbackresp.val.nvlink.counter
             if 'field_id' not in info:
                 info['field_id'] = set()
             info['field_id'].add(callbackresp.val.nvlink.fieldId)
             info['details'] = f"Nvlink violation on GPU: {gpuid}"
+            report.escalate(HealthStatus.ERROR)
         elif condition == dcgm_structs.DCGM_POLICY_COND_XID:
             if 'xid_error' not in info:
                 info['xid_error'] = set()
             info['xid_error'].add(callbackresp.val.xid.errnum)
             info['details'] = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
-            # Check if all XIDs are harmless - if so, downgrade to warning
+            # Harmless XIDs are warnings; others are errors
             if info['xid_error'].issubset(set(harmless_xid)):
-                status = HealthStatus.WARNING
+                report.escalate(HealthStatus.WARNING)
             else:
-                status = HealthStatus.ERROR
+                report.escalate(HealthStatus.ERROR)
         # elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
-        #     status = HealthStatus.WARNING
+        #     report.escalate(HealthStatus.WARNING)
         #     info['temperature'] = callbackresp.val.thermal.thermalViolation
         #     info['details'] = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
         # elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
-        #     status = HealthStatus.WARNING
+        #     report.escalate(HealthStatus.WARNING)
         #     info['power'] = callbackresp.val.power.powerViolation
         #     info['details'] = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
         elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
             info['sbepage_count'] = callbackresp.val.mpr.sbepages
             info['dbepage_count'] = callbackresp.val.mpr.dbepages
             info['details'] = f"Max retired pages violation: SBE retired pages: {info['sbepage_count']}, DBE retired pages {info['dbepage_count']} GPU: {gpuid}"
+            report.escalate(HealthStatus.ERROR)
 
         vd[gpuid] = info
         report.custom_fields[condition_str] = vd
-
-        report.status = status
         report.description = "GPU Policy Violations detected"
         if not report.details:
             report.details = info['details']
@@ -305,7 +306,7 @@ class GpuHealthChecks(HealthModule):
             try:
                 details = list()
                 subsystems = set()
-                status = HealthStatus.OK
+                report = HealthReport()
                 if not self.dcgmGroup:
                     raise Wrap.DcgmInvalidHandle
                 group_health = self.dcgmGroup.health.Check()
@@ -313,9 +314,8 @@ class GpuHealthChecks(HealthModule):
 
                 field_errors, category = self.track_fields()
                 if len(field_errors) > 0:
-                    status = HealthStatus.ERROR
-                if status == HealthStatus.OK and incident_count == 0:
-                    report = HealthReport()
+                    report.escalate(HealthStatus.ERROR)
+                if report.status == HealthStatus.OK and incident_count == 0:
                     await self.reporter.update_report(name=health_system, report=report)
                     return
 
@@ -324,29 +324,25 @@ class GpuHealthChecks(HealthModule):
                     system = Wrap.convert_system_enum_to_system_name(group_health.incidents[index].system)
                     error_code = group_health.incidents[index].error.code
                     if error_code == dcgm_errors.DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD:
-                        if status != HealthStatus.ERROR:
-                            status = HealthStatus.WARNING
+                        report.escalate(HealthStatus.WARNING)
                     else:
                         incident_status = Wrap.convert_health_to_status(group_health.incidents[index].health)
                         if incident_status == HealthStatus.NA:
                             log.error(f"Invalid health status receieved {system}, {error_code}")
-                        elif incident_status == HealthStatus.ERROR:
-                            status = HealthStatus.ERROR
-                        elif incident_status == HealthStatus.WARNING and status != HealthStatus.ERROR:
-                            status = HealthStatus.WARNING
+                        elif incident_status != HealthStatus.NA:
+                            report.escalate(incident_status)
                     subsystems.add(system)
                     details.append(group_health.incidents[index].error.msg)
 
                 details.extend(field_errors)
                 subsystems.update(category)
                 incident_count += len(field_errors)
-                description = f"{health_system} report {status.value} count={incident_count} subsystem={', '.join(subsystems)}"
+                description = f"{health_system} report {report.status.value} count={incident_count} subsystem={', '.join(subsystems)}"
                 custom_fields['categories'] = subsystems
                 custom_fields['error_count'] = incident_count
-                report = HealthReport(status=status,
-                                      description=description,
-                                      details='\n'.join(details),
-                                      custom_fields=custom_fields)
+                report.description = description
+                report.details = '\n'.join(details)
+                report.custom_fields = custom_fields
                 await self.reporter.update_report(name=health_system, report=report)
                 return
 

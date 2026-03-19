@@ -31,10 +31,37 @@ def make_json_safe(obj):
         raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 class HealthStatus(Enum):
-    OK = 'OK'
-    WARNING = 'Warning'
-    ERROR = 'Error'
-    NA = 'NA'
+    # (display_value, severity) — severity controls ordering
+    NA = ('NA', 0)
+    OK = ('OK', 1)
+    WARNING = ('Warning', 2)
+    ERROR = ('Error', 3)
+
+    def __new__(cls, display_value: str, severity: int):
+        obj = object.__new__(cls)
+        obj._value_ = display_value
+        obj.severity = severity
+        return obj
+
+    def __lt__(self, other):
+        if not isinstance(other, HealthStatus):
+            return NotImplemented
+        return self.severity < other.severity
+
+    def __le__(self, other):
+        if not isinstance(other, HealthStatus):
+            return NotImplemented
+        return self.severity <= other.severity
+
+    def __gt__(self, other):
+        if not isinstance(other, HealthStatus):
+            return NotImplemented
+        return self.severity > other.severity
+
+    def __ge__(self, other):
+        if not isinstance(other, HealthStatus):
+            return NotImplemented
+        return self.severity >= other.severity
 
 @dataclass
 class HealthReport:
@@ -71,6 +98,19 @@ class HealthReport:
 
     def __getattr__(self, item):
         return self.custom_fields.get(item, None)
+
+    def escalate(self, new_status: HealthStatus):
+        """
+        Only upgrade status, never downgrade.
+        This method is provided so that statuses can be
+        set based on different conditions and only the
+        highest status is preserved.
+        Use this method to avoid writing conditional escalation
+        logic.
+        Blanket status assignments still work.
+        """
+        if new_status > self.status:
+            self.status = new_status
 
     def view(self) -> Dict[str, Any]:
         # Convert the dataclass to a dictionary
