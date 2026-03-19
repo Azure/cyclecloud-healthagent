@@ -236,15 +236,14 @@ class NetworkHealthChecks(HealthModule):
             custom_fields[ni.name]['link_flap_since_uptime'] = ni.carrier_changes
             if link_down_rate_per_hour >= 1:
                 msgs.append(f"Network interface {ni.name} went down {link_down_rate_per_hour} times in the last hour")
-                if report.status == HealthStatus.OK:
-                    report.status = HealthStatus.WARNING
+                report.escalate(HealthStatus.WARNING)
 
             if ni.operstate != OperState.UP:
                 custom_fields[ni.name]['error_count'] = 1
                 unop.append(ni.name)
                 msgs.append(f"Network interface {ni.name} is not operational and in state {ni.operstate.value}.")
                 custom_fields[ni.name]['carrier'] = ni.carrier.value
-                report.status = HealthStatus.ERROR
+                report.escalate(HealthStatus.ERROR)
 
 
         if msgs:

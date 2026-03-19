@@ -5,6 +5,59 @@ import json
 from unittest.mock import patch,AsyncMock
 import enum
 
+def test_healthstatus_ordering():
+    # Severity order: NA < OK < WARNING < ERROR
+    assert HealthStatus.NA < HealthStatus.OK
+    assert HealthStatus.OK < HealthStatus.WARNING
+    assert HealthStatus.WARNING < HealthStatus.ERROR
+
+    assert HealthStatus.ERROR > HealthStatus.WARNING
+    assert HealthStatus.WARNING > HealthStatus.OK
+    assert HealthStatus.OK > HealthStatus.NA
+
+    assert HealthStatus.OK >= HealthStatus.OK
+    assert HealthStatus.ERROR >= HealthStatus.WARNING
+    assert HealthStatus.OK <= HealthStatus.WARNING
+
+    # max() picks the most severe
+    assert max(HealthStatus.OK, HealthStatus.ERROR) == HealthStatus.ERROR
+    assert max(HealthStatus.WARNING, HealthStatus.OK) == HealthStatus.WARNING
+    assert max(HealthStatus.NA, HealthStatus.OK) == HealthStatus.OK
+
+
+def test_healthstatus_enum_lookups():
+    # Reverse value lookup works
+    assert HealthStatus('OK') is HealthStatus.OK
+    assert HealthStatus('Error') is HealthStatus.ERROR
+    # Name-based lookup works
+    assert HealthStatus['WARNING'] is HealthStatus.WARNING
+    # .value returns the display string, not the tuple
+    assert HealthStatus.OK.value == 'OK'
+    assert HealthStatus.ERROR.value == 'Error'
+
+
+def test_healthreport_escalate():
+    report = HealthReport()
+    assert report.status == HealthStatus.OK
+    # escalate to WARNING
+    report.escalate(HealthStatus.WARNING)
+    assert report.status == HealthStatus.WARNING
+    # escalate to ERROR
+    report.escalate(HealthStatus.ERROR)
+    assert report.status == HealthStatus.ERROR
+    # attempting to "downgrade" to WARNING is ignored
+    report.escalate(HealthStatus.WARNING)
+    assert report.status == HealthStatus.ERROR
+    # attempting to "downgrade" to OK is ignored
+    report.escalate(HealthStatus.OK)
+    assert report.status == HealthStatus.ERROR
+    # Test blanket assignments, these should still work
+    report.status = HealthStatus.WARNING
+    assert report.status == HealthStatus.WARNING
+    report.status = HealthStatus.OK
+    assert report.status == HealthStatus.OK
+
+
 def test_healthreport():
 
     ok_report =  HealthReport()
