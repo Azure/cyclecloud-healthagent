@@ -4,3 +4,5 @@ build/
 .build.log
 .venv/
 .bindings
+*.pyc
+.context/

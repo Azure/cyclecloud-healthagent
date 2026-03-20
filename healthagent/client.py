@@ -15,8 +15,8 @@ def get_response(command, timeout):
             # Connect to the Unix socket
             client_socket.connect(SOCKET_PATH)
 
-            # Prepare the message
-            client_socket.sendall(command.encode())
+            # Always send JSON
+            client_socket.sendall(json.dumps(command).encode())
             client_socket.shutdown(socket.SHUT_WR)
             # Now wait for full response
             response = b''
@@ -45,6 +45,35 @@ def get_response(command, timeout):
         logging.error(f"An unexpected error occurred: {e}")
         return None
 
+def parse_check_args(check_groups):
+    """Parse -c groups into a checks dict.
+
+    Each group is a list of strings: [check_name, key=value, ...]
+
+    Returns:
+        dict or None: {check_name: {key: value, ...}, ...} or None if no checks specified.
+    """
+    if not check_groups:
+        return None
+    checks = {}
+    for group in check_groups:
+        if not group:
+            continue
+        check_name = group[0]
+        kwargs = {}
+        for arg in group[1:]:
+            if '=' in arg:
+                key, _, value = arg.partition('=')
+                # Comma-separated values become a list
+                if ',' in value:
+                    value = value.split(',')
+                kwargs[key] = value
+            else:
+                logging.error(f"Invalid argument '{arg}' for check '{check_name}'. Expected key=value format.")
+                sys.exit(1)
+        checks[check_name] = kwargs
+    return checks if checks else None
+
 def print_bash_friendly(result):
 
     res = {}
@@ -56,6 +85,36 @@ def print_bash_friendly(result):
         )
         res[module_name] = total_errors
     return [print(f"{x},{y}") for x,y in res.items()]
+
+def print_checks_table(response, check_type="all"):
+    """Format list_checks response as a table, optionally filtered by type."""
+    rows = []
+    for module, checks in response.items():
+        for name, info in checks.items():
+            categories = info.get("category", [])
+            if check_type != "all" and check_type not in categories:
+                continue
+            category = ", ".join(categories)
+            interval = info.get("interval")
+            interval_str = f"{interval}s" if interval is not None else ""
+            sig = info.get("signature", "")
+            rows.append((module, name, category, interval_str, sig))
+
+    if not rows:
+        print("No checks found.")
+        return
+
+    headers = ("Module", "Check", "Category", "Interval", "Signature")
+    col_widths = [len(h) for h in headers]
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(val))
+
+    fmt = "  ".join(f"{{:<{w}}}" for w in col_widths)
+    print(fmt.format(*headers))
+    print(fmt.format(*("-" * w for w in col_widths)))
+    for row in rows:
+        print(fmt.format(*row))
 
 def run_command(command, timeout, bash=False):
     response = get_response(command=command, timeout=timeout)
@@ -83,35 +142,54 @@ def main():
     group.add_argument(
         "-v", "--version", action="store_true", help="Return Healthagent version"
     )
+    group.add_argument(
+        "-l", "--list-checks", metavar="TYPE", nargs="?", const="all",
+        choices=["all", "epilog", "prolog"],
+        help="List available checks by type (default: all). Example: health -l epilog"
+    )
 
+    parser.add_argument(
+        "-c", "--check", action="append", nargs="+", metavar="NAME",
+        help="Run a prolog/epilog check by name, with optional key=value args. "
+             "Repeatable. Example: -c GpuMemoryCheck gpu_id=0,1 -c GpuDiagnosticCheck"
+    )
     parser.add_argument("-b", "--bash", action="store_true", default=False, help="Export results into bash friendly variables")
-    #parser.add_argument(
-    #    "-l", "--log-level", help="Logging level (e.g., DEBUG, INFO, WARNING, ERROR, CRITICAL)"
-    #)
 
     args = parser.parse_args()
 
-    # Configure logging level
-    #log_level = args.log_level.upper() if args.log_level else "ERROR"
-    #if log_level not in ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]:
-    #    log_level = "ERROR"
     logging.basicConfig(
         format='%(levelname)s - %(message)s',
         level=logging.ERROR
-        #level=getattr(logging, log_level, logging.ERROR)
         )
 
-    if not (args.epilog or args.prolog or args.version):
+    if not (args.epilog or args.prolog or args.version or args.list_checks):
         args.status = True
-    # Handle arguments
-    if args.epilog:
-        run_command(command="epilog", timeout=1200)
+
+    checks = parse_check_args(args.check)
+
+    if checks and not (args.epilog or args.prolog):
+        parser.error("-c/--check can only be used with -e/--epilog or -p/--prolog")
+
+    if args.list_checks:
+        command = {"command": "list_checks", "type": "all"}
+        response = get_response(command=command, timeout=10)
+        if not response:
+            sys.exit(-1)
+        print_checks_table(response, check_type=args.list_checks)
+    elif args.epilog:
+        command = {"command": "epilog"}
+        if checks:
+            command["checks"] = checks
+        run_command(command=command, timeout=1200)
     elif args.prolog:
-        pass
+        command = {"command": "prolog"}
+        if checks:
+            command["checks"] = checks
+        run_command(command=command, timeout=1200)
     elif args.status:
-        run_command(command="status", timeout=30, bash=args.bash)
+        run_command(command={"command": "status"}, timeout=30, bash=args.bash)
     elif args.version:
-        run_command(command="version", timeout=5)
+        run_command(command={"command": "version"}, timeout=5)
     else:
         parser.print_help()
 
