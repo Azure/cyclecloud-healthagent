@@ -286,7 +286,7 @@ class GpuHealthChecks(HealthModule):
 
     @epilog
     async def run_epilog(self):
-        health_system = f"ActiveGPUHealthChecks"
+        health_system = f"ActiveDiagnosticChecks"
         report = await Scheduler.add_task(run_active_healthchecksv2)
         await self.reporter.update_report(name=health_system, report=report)
         response = {}
