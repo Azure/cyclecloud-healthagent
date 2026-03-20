@@ -1,6 +1,7 @@
 import os
 import asyncio
 import time
+from healthagent import healthcheck
 from datetime import timedelta, datetime
 from healthagent.reporter import Reporter, HealthStatus
 from healthagent.scheduler import Scheduler
@@ -21,7 +22,6 @@ class KmsgReader(HealthModule):
             raise
         loop = asyncio.get_running_loop()
         loop.add_reader(self.fd, self.read_callback)
-        self.name = "KernelMonitor"
         Scheduler.add_task(self.clear_errors)
 
     def __del__(self):
@@ -78,6 +78,7 @@ class KmsgReader(HealthModule):
         else:
             return f"LEVEL{level}"
 
+    @healthcheck("KernelLogCheck")
     def read_callback(self):
         """
         Kernel Log levels:
@@ -117,5 +118,4 @@ class KmsgReader(HealthModule):
             report.details = "\n".join(formatted_msg)
         report.message = "KernelMonitor Detected Alerts"
         report.description = "Kernel Log Monitor reports Critical/Emergency Alerts"
-
-        Scheduler.add_task(self.reporter.update_report, self.name, report)
+        Scheduler.add_task(self.reporter.update_report, self.read_callback.report_name, report)

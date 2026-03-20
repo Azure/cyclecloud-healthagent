@@ -2,7 +2,9 @@ from dbus_next.aio import MessageBus
 from dbus_next.errors import DBusError
 from dbus_next.constants import BusType
 import logging
+from datetime import datetime, timezone
 import systemd.journal
+from healthagent import healthcheck
 from healthagent.healthmodule import HealthModule
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
@@ -100,21 +102,51 @@ class SystemdMonitor(HealthModule):
         transient or do not represent valid recovery from an unhealthy state.
         """
         log.debug(f"service: {service}, ActiveState: {active_state} SubState: {substate}")
-        report = HealthReport()
         if active_state != self.state.get(service):
             if active_state == "failed":
-                report.status =  HealthStatus.ERROR
-                report.description = f"{service} Service unhealthy"
-                report.details = self.get_journal_entries(service_name=service)
-                log.error(report.description)
-                await self.reporter.update_report(name=service, report=report)
+                log.error(f"{service} Service unhealthy")
+                self.state[service] = active_state
+                await self._update_services()
             elif active_state == "active" and substate == "running":
-                if self.state.get(service) in ("failed", "inactive"):
+                if self.state.get(service) in ("failed", "inactive", None):
                     log.info(f"{service} Service Healthy")
-                    report.status = HealthStatus.OK
-                    await self.reporter.update_report(name=service, report=report)
+                    self.state[service] = active_state
+                    await self._update_services()
 
             self.state[service] = active_state
+
+    @healthcheck("SystemdServiceCheck")
+    async def _update_services(self):
+        """Build a single aggregated HealthReport from all tracked service states."""
+        failed_services = [svc for svc, state in self.state.items() if state == "failed"]
+        now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S %Z")
+        DETAIL_SEPARATOR = "------"
+        # Build per-service custom_fields
+        custom_fields = {"error_count": len(failed_services)}
+        for svc, state in self.state.items():
+            svc_status = HealthStatus.ERROR if state == "failed" else HealthStatus.OK
+            custom_fields[svc] = {"status": svc_status.value, "last_update": now}
+
+        if failed_services:
+            description = ", ".join(failed_services) + " unhealthy"
+            details_parts = []
+            for svc in failed_services:
+                journal = self.get_journal_entries(service_name=svc)
+                details_parts.append(f"{DETAIL_SEPARATOR} {svc} {DETAIL_SEPARATOR}\n{journal}")
+            details = "\n".join(details_parts)
+            report = HealthReport(
+                status=HealthStatus.ERROR,
+                description=description,
+                details=details,
+                custom_fields=custom_fields,
+            )
+        else:
+            report = HealthReport(
+                status=HealthStatus.OK,
+                custom_fields=custom_fields,
+            )
+
+        await self.reporter.update_report(name=self._update_services.report_name, report=report)
 
 
     def create_callback(self, unit: str = None, service_name: str = None):

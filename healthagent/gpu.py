@@ -7,7 +7,7 @@ import os
 from time import time
 import shutil
 from datetime import datetime
-from healthagent import epilog,status
+from healthagent import epilog,status,healthcheck
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
 from dataclasses import asdict
@@ -102,6 +102,7 @@ class GpuHealthChecks(HealthModule):
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
+    @healthcheck("GpuCountCheck")
     @Scheduler.periodic(120)
     async def gpu_count_check(self):
 
@@ -112,7 +113,7 @@ class GpuHealthChecks(HealthModule):
             report.status = HealthStatus.ERROR
             report.details = f"OS shows {os_gpu_count} GPU devices, PCI Bus shows {pci_gpu_count} GPU devices"
             report.description = "GPU Count Mismatch"
-        await self.reporter.update_report(name="GPUCountMismatch", report=report)
+        await self.reporter.update_report(name=self.gpu_count_check.report_name, report=report)
 
     async def create(self):
         await self.reporter.clear_all_errors()
@@ -120,9 +121,10 @@ class GpuHealthChecks(HealthModule):
         Scheduler.add_task(self.gpu_count_check)
         Scheduler.add_task(self.run_background_healthchecks)
 
+    @healthcheck("GpuPolicyCheck")
     async def handle_policy_violation(self, callbackresp):
 
-        health_system = "GPUPolicyChecks"
+        health_system = self.handle_policy_violation.report_name
         report = self.reporter.get_report(health_system) or HealthReport()
         condition = callbackresp.condition
         gpuid = callbackresp.gpuId
@@ -249,9 +251,10 @@ class GpuHealthChecks(HealthModule):
         except Exception as e:
             log.exception(e)
 
+    @healthcheck("GpuMemoryCheck")
     @epilog
     async def memory_allocation_test(self, gpu_id: list = None):
-        health_system = "MemoryAllocationTest"
+        health_system = self.memory_allocation_test.report_name
         report = HealthReport()
         script = os.path.join(os.path.dirname(__file__), "tools", "cuda_malloc.py")
         cmd = [sys.executable, script]
@@ -284,15 +287,17 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
+    @healthcheck("GpuDiagnosticCheck")
     @epilog
     async def run_epilog(self):
-        health_system = f"ActiveDiagnosticChecks"
+        health_system = self.run_epilog.report_name
         report = await Scheduler.add_task(run_active_healthchecksv2)
         await self.reporter.update_report(name=health_system, report=report)
         response = {}
         response[health_system] = report.view()
         return response
 
+    @healthcheck("GpuHealthCheck")
     @Scheduler.periodic(60)
     async def run_background_healthchecks(self):
         """
@@ -300,7 +305,7 @@ class GpuHealthChecks(HealthModule):
         These are safe to run constantly alongside jobs.
         """
 
-        health_system = f"BackgroundGPUHealthChecks"
+        health_system = self.run_background_healthchecks.report_name
         custom_fields = {}
         try:
             try:
