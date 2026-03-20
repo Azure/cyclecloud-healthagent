@@ -249,6 +249,41 @@ class GpuHealthChecks(HealthModule):
             log.exception(e)
 
     @epilog
+    async def memory_allocation_test(self, gpu_id: list = None):
+        health_system = "MemoryAllocationTest"
+        report = HealthReport()
+        script = os.path.join(os.path.dirname(__file__), "tools", "cuda_malloc.py")
+        cmd = [sys.executable, script]
+        if gpu_id:
+            cmd.extend(["--gpus", ",".join(str(g) for g in gpu_id)])
+        try:
+            proc = await Scheduler.add_task(Scheduler.subprocess(*cmd))
+            stdout, stderr = await proc.communicate()
+            output = stdout.decode().strip()
+            err_output = stderr.decode().strip()
+            if proc.returncode == 0:
+                report.status = HealthStatus.OK
+                report.description = "Memory allocation test passed"
+                report.details = output
+            elif proc.returncode == 2:
+                report.status = HealthStatus.WARNING
+                report.description = "Test not run"
+                report.details = err_output or output
+            else:
+                report.status = HealthStatus.ERROR
+                report.description = "Memory allocation test failed"
+                report.details = f"{output}\n{err_output}".strip()
+        except Exception as e:
+            log.exception(e)
+            report.status = HealthStatus.WARNING
+            report.description = "Test not run."
+            report.details = str(e)
+        await self.reporter.update_report(name=health_system, report=report)
+        response = {}
+        response[health_system] = report.view()
+        return response
+
+    @epilog
     async def run_epilog(self):
         health_system = f"ActiveGPUHealthChecks"
         report = await Scheduler.add_task(run_active_healthchecksv2)
