@@ -221,6 +221,11 @@ mkdir -p $HEALTHAGENT_DIR
     if [ -e "/dev/nvidia0" ]; then
         echo "NVIDIA GPU is present"
         setup_dcgm
+        source $VENV_DIR/bin/activate
+        if ! pip install cuda-bindings; then
+            echo "WARNING: Failed to install cuda-bindings"
+        fi
+        deactivate
     fi
     setup_systemd
     echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
