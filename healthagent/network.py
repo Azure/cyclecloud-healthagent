@@ -4,7 +4,7 @@ from collections import deque, defaultdict
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
-from healthagent import status
+from healthagent import status, healthcheck
 from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
 from healthagent.scheduler import Scheduler
@@ -220,6 +220,7 @@ class NetworkHealthChecks(HealthModule):
             log.info("carrier_changes : %s" % iface.carrier_changes)
             log.info("carrier_down_count : %s" % iface.carrier_down_count)
 
+    @healthcheck("NetworkInterfaceCheck")
     @Scheduler.periodic(60)
     async def run_network_checks(self):
 
@@ -256,4 +257,4 @@ class NetworkHealthChecks(HealthModule):
                 report.description = f"Network Warnings"
 
 
-        await self.reporter.update_report('Network', report=report)
+        await self.reporter.update_report(self.run_network_checks.report_name, report=report)

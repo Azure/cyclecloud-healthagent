@@ -1,7 +1,7 @@
 import os
 import pwd
 import logging
-from healthagent import epilog
+from healthagent import epilog, healthcheck
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter, HealthStatus, HealthReport
@@ -76,6 +76,7 @@ class ProcessMonitor(HealthModule):
     async def create(self):
         Scheduler.add_task(self.monitor)
 
+    @healthcheck("ProcessStateCheck")
     @epilog
     @Scheduler.periodic(60)
     async def monitor(self):
@@ -92,7 +93,7 @@ class ProcessMonitor(HealthModule):
         """
 
         zombieproc = []
-        name = "ProcessMonitor"
+        name = self.monitor.report_name
         report = HealthReport()
         hungprocs = []
         for pid in ProcessMonitor.list_pids():

@@ -1,16 +1,19 @@
-from healthagent import epilog, status, prolog
+from healthagent import epilog, status, prolog, healthcheck
 from healthagent.reporter import Reporter
 from healthagent.healthmodule import HealthModule
+from healthagent.scheduler import Scheduler
 
 # Validate _get_handlers with MRO-based discovery.
 
 # Simulated module with multiple epilog handlers
 class FakeGpuModule(HealthModule):
 
+    @healthcheck("ActiveGPUHealthChecks")
     @epilog
     async def run_epilog(self):
         return {"ActiveGPUHealthChecks": {"status": "OK"}}
 
+    @healthcheck("NvlinkCheck")
     @epilog
     async def run_nvlink_epilog(self):
         return {"NvlinkCheck": {"status": "OK"}}
@@ -28,10 +31,12 @@ class FakeSystemdModule(HealthModule):
 # Module with prolog + epilog
 class FakeProcessModule(HealthModule):
 
+    @healthcheck("ZombieCheck")
     @epilog
     async def check_zombies(self):
         return {"ZombieCheck": {"status": "OK"}}
 
+    @healthcheck("Readiness")
     @prolog
     async def check_readiness(self):
         return {"Readiness": {"status": "OK"}}
@@ -40,16 +45,19 @@ class FakeProcessModule(HealthModule):
 # Module with multi-decorated methods
 class FakeMultiDecoratorModule(HealthModule):
 
+    @healthcheck("ValidateBoth")
     @prolog
     @epilog
     async def validate_both(self):
         return {"ValidateBoth": {"status": "OK"}}
 
+    @healthcheck("CheckAndReport")
     @prolog
     @status
     def check_and_report(self):
         return {"CheckAndReport": {"status": "OK"}}
 
+    @healthcheck("DoEverything")
     @prolog
     @epilog
     @status
@@ -202,3 +210,303 @@ def test_override_base_method_no_duplicates():
     assert len(handlers) == 1
     # The returned handler should be the overridden version
     assert handlers[0]() == {"custom_status": "overridden"}
+
+
+# --- Tests for @healthcheck, execute with checks filtering, list_checks, and kwargs ---
+
+class FakeEpilogWithArgs(HealthModule):
+
+    @healthcheck("MemTest")
+    @epilog
+    async def memory_test(self, gpu_id: list = None):
+        return {"MemTest": {"status": "OK", "gpu_id": gpu_id}}
+
+    @healthcheck("DiagTest")
+    @epilog
+    async def diag_test(self):
+        return {"DiagTest": {"status": "OK"}}
+
+
+def test_healthcheck_decorator_sets_report_name():
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+    assert mod.run_epilog.report_name == "ActiveGPUHealthChecks"
+    assert mod.run_nvlink_epilog.report_name == "NvlinkCheck"
+
+
+def test_list_checks():
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+    checks = mod.list_checks("epilog")
+    assert "ActiveGPUHealthChecks" in checks
+    assert "NvlinkCheck" in checks
+    assert len(checks) == 2
+
+
+def test_list_checks_empty_for_undecorated_phase():
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+    checks = mod.list_checks("prolog")
+    assert len(checks) == 0
+
+
+async def test_execute_with_checks_filter():
+    """When checks dict is provided, only matching handlers should run."""
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+
+    result = await mod.execute("epilog", checks={"ActiveGPUHealthChecks": {}})
+    assert "ActiveGPUHealthChecks" in result
+    assert "NvlinkCheck" not in result
+
+
+async def test_execute_with_checks_filter_case_insensitive():
+    """Check name matching should be case-insensitive."""
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+
+    result = await mod.execute("epilog", checks={"activegpuhealthchecks": {}})
+    assert "ActiveGPUHealthChecks" in result
+    assert "NvlinkCheck" not in result
+
+    result2 = await mod.execute("epilog", checks={"NVLINKCHECK": {}})
+    assert "NvlinkCheck" in result2
+    assert "ActiveGPUHealthChecks" not in result2
+
+
+async def test_execute_with_checks_none_runs_all():
+    """When checks is None, all handlers should run (backward compat)."""
+    reporter = Reporter()
+    mod = FakeGpuModule(reporter=reporter)
+
+    result = await mod.execute("epilog", checks=None)
+    assert "ActiveGPUHealthChecks" in result
+    assert "NvlinkCheck" in result
+
+
+async def test_execute_with_kwargs():
+    """Check kwargs are passed through to the handler."""
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+
+    result = await mod.execute("epilog", checks={"MemTest": {"gpu_id": [0, 1]}})
+    assert result["MemTest"]["gpu_id"] == [0, 1]
+    assert "DiagTest" not in result
+
+
+async def test_execute_with_kwargs_default():
+    """Handler called with no kwargs uses default args."""
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+
+    result = await mod.execute("epilog", checks={"MemTest": {}})
+    assert result["MemTest"]["gpu_id"] is None
+
+
+async def test_execute_bad_kwargs_logs_error(capfd):
+    """Invalid kwargs should be caught and not crash the run."""
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+
+    result = await mod.execute("epilog", checks={"DiagTest": {"nonexistent": "value"}})
+    # DiagTest does not accept 'nonexistent', so it should be skipped with an error
+    assert "DiagTest" not in result
+
+
+def test_list_checks_includes_signature():
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+    checks = mod.list_checks("epilog")
+    assert "MemTest" in checks
+    assert "gpu_id" in checks["MemTest"]
+    assert "DiagTest" in checks
+    assert checks["DiagTest"] == "()"
+
+
+# --- Tests for background vs on-demand distinction ---
+
+class FakeBackgroundOnlyModule(HealthModule):
+    """Module with only background checks — no epilog/prolog."""
+
+    @healthcheck("BackgroundMetric")
+    def some_periodic_check(self):
+        return {"BackgroundMetric": {"status": "OK"}}
+
+
+async def test_background_check_not_targetable_via_epilog():
+    """A check that only has @healthcheck (no @epilog) should not appear in epilog list_checks."""
+    reporter = Reporter()
+    mod = FakeBackgroundOnlyModule(reporter=reporter)
+    checks = mod.list_checks("epilog")
+    assert "BackgroundMetric" not in checks
+
+
+async def test_execute_epilog_skips_background_only():
+    """Targeting a background-only check via epilog should produce empty result."""
+    reporter = Reporter()
+    mod = FakeBackgroundOnlyModule(reporter=reporter)
+    result = await mod.execute("epilog", checks={"BackgroundMetric": {}})
+    assert "BackgroundMetric" not in result
+
+
+# --- Tests for list_all_checks ---
+
+class FakeFullModule(HealthModule):
+    """Module with checks in every category for list_all_checks testing."""
+
+    @healthcheck("EpilogOnly")
+    @epilog
+    async def epilog_check(self):
+        return {"EpilogOnly": {"status": "OK"}}
+
+    @healthcheck("PrologOnly")
+    @prolog
+    async def prolog_check(self):
+        return {"PrologOnly": {"status": "OK"}}
+
+    @healthcheck("BackgroundOnly")
+    @Scheduler.periodic(120)
+    async def background_check(self):
+        return {"BackgroundOnly": {"status": "OK"}}
+
+    @healthcheck("EpilogAndBackground")
+    @epilog
+    @Scheduler.periodic(60)
+    async def dual_check(self):
+        return {"EpilogAndBackground": {"status": "OK"}}
+
+    @healthcheck("AsyncCallback")
+    def callback_check(self):
+        return {"AsyncCallback": {"status": "OK"}}
+
+    @Scheduler.periodic(300)
+    async def admin_task(self):
+        """No @healthcheck — should NOT appear in list_all_checks."""
+        pass
+
+
+def test_list_all_checks_discovers_all_healthchecks():
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert "EpilogOnly" in checks
+    assert "PrologOnly" in checks
+    assert "BackgroundOnly" in checks
+    assert "EpilogAndBackground" in checks
+    assert "AsyncCallback" in checks
+    assert len(checks) == 5
+
+
+def test_list_all_checks_excludes_non_healthcheck():
+    """Admin tasks without @healthcheck should not appear."""
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    checks = mod.list_checks()
+    # admin_task has no report_name, so it must not be present
+    for info in checks.values():
+        assert "admin_task" not in str(info)
+
+
+def test_list_all_checks_categories():
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["EpilogOnly"]["category"] == ["epilog"]
+    assert checks["PrologOnly"]["category"] == ["prolog"]
+    assert checks["BackgroundOnly"]["category"] == ["background"]
+    assert checks["AsyncCallback"]["category"] == ["async"]
+    # Dual check should have both categories
+    assert "epilog" in checks["EpilogAndBackground"]["category"]
+    assert "background" in checks["EpilogAndBackground"]["category"]
+
+
+def test_list_all_checks_interval():
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["BackgroundOnly"]["interval"] == 120
+    assert checks["EpilogAndBackground"]["interval"] == 60
+    assert "interval" not in checks["EpilogOnly"]
+    assert "interval" not in checks["AsyncCallback"]
+
+
+def test_list_all_checks_signature():
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    checks = mod.list_checks()
+    for name, info in checks.items():
+        assert "signature" in info
+
+
+def test_list_checks_phase_filters_from_registry():
+    """list_checks with a phase should only return checks in that category."""
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    epilog_checks = mod.list_checks("epilog")
+    assert "EpilogOnly" in epilog_checks
+    assert "EpilogAndBackground" in epilog_checks
+    assert "BackgroundOnly" not in epilog_checks
+    assert "AsyncCallback" not in epilog_checks
+    # Phase-filtered results return {name: signature_str}
+    assert isinstance(epilog_checks["EpilogOnly"], str)
+
+
+def test_list_checks_cached():
+    """Calling list_checks multiple times should return the same cached registry."""
+    reporter = Reporter()
+    mod = FakeFullModule(reporter=reporter)
+    first = mod.list_checks()
+    second = mod.list_checks()
+    assert first is second
+
+
+# --- Tests for stale report pruning ---
+
+from healthagent.reporter import HealthReport
+
+def test_status_prunes_stale_reporter_keys():
+    """Reporter keys that don't match any registered healthcheck should be removed by status()."""
+    reporter = Reporter()
+    # Simulate stale keys restored from a pickle (old check names)
+    reporter.store["OldRenamedCheck"] = HealthReport()
+    reporter.store["AnotherObsoleteCheck"] = HealthReport()
+    # Add a valid key that matches a real healthcheck
+    reporter.store["ActiveGPUHealthChecks"] = HealthReport()
+
+    mod = FakeGpuModule(reporter=reporter)
+    result = mod.status()
+
+    # Stale keys should be gone
+    assert "OldRenamedCheck" not in reporter.store
+    assert "AnotherObsoleteCheck" not in reporter.store
+    # Valid key should remain
+    assert "ActiveGPUHealthChecks" in reporter.store
+    # Summarized result should only contain the valid key
+    assert "OldRenamedCheck" not in result
+    assert "ActiveGPUHealthChecks" in result
+
+
+def test_status_no_pruning_when_all_keys_valid():
+    """When all reporter keys match registered checks, nothing should be pruned."""
+    reporter = Reporter()
+    reporter.store["ActiveGPUHealthChecks"] = HealthReport()
+    reporter.store["NvlinkCheck"] = HealthReport()
+
+    mod = FakeGpuModule(reporter=reporter)
+    result = mod.status()
+
+    assert len(reporter.store) == 2
+    assert "ActiveGPUHealthChecks" in result
+    assert "NvlinkCheck" in result
+
+
+def test_status_prunes_with_empty_registry():
+    """Module with no healthchecks should prune all reporter keys."""
+    reporter = Reporter()
+    reporter.store["StaleKey"] = HealthReport()
+
+    mod = FakeSystemdModule(reporter=reporter)
+    result = mod.status()
+
+    assert len(reporter.store) == 0
+    assert "StaleKey" not in result

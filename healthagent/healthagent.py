@@ -102,11 +102,20 @@ class Healthagent:
 
 
     @classmethod
-    async def _execute_module_functions(cls, attribute_flag: str):
+    async def _execute_module_functions(cls, attribute_flag: str, checks: dict = None):
         response = {}
         for name, module in cls.modules.items():
-            response[name] = await module.execute(attribute_flag)
+            response[name] = await module.execute(attribute_flag, checks=checks)
         return response
+
+    @classmethod
+    def _list_module_checks(cls, attribute_flag: str = None):
+        result = {}
+        for name, module in cls.modules.items():
+            module_checks = module.list_checks(attribute_flag)
+            if module_checks:
+                result[name] = module_checks
+        return result
 
     @classmethod
     async def handle_client(cls, reader, writer):
@@ -121,27 +130,31 @@ class Healthagent:
                 data += chunk
             message = data.decode()
             log.debug("Received: %s", message)
+
+            request = json.loads(message)
+            start = perf_counter()
+            command = request.get("command", "")
+            checks = request.get("checks", None)
+
             response = {}
-            if message == "epilog":
-                log.debug("Received epilog request")
-                response = await cls._execute_module_functions(attribute_flag="epilog")
-                log.debug(f"epilog response: {response}")
-            elif message == "prolog":
-                log.debug("Received Prolog request")
-                response = await cls._execute_module_functions(attribute_flag="prolog")
-                log.debug(f"prolog response {response}")
-            elif message == "status":
-                log.debug("Received status request")
+            if command == "epilog":
+                response = await cls._execute_module_functions(attribute_flag="epilog", checks=checks)
+            elif command == "prolog":
+                response = await cls._execute_module_functions(attribute_flag="prolog", checks=checks)
+            elif command == "status":
                 response = await cls._execute_module_functions(attribute_flag="status")
-                log.debug(f"status response: {response}")
-            elif message == "version":
+            elif command == "list_checks":
+                check_type = request.get("type", "all")
+                flag = None if check_type == "all" else check_type
+                response = cls._list_module_checks(attribute_flag=flag)
+            elif command == "version":
                 response = VERSION
-                log.debug(f"version response: {response}")
             else:
                 raise ValueError("Invalid message received")
 
             writer.write(json.dumps(response).encode())
             await writer.drain()
+            log.debug(f"{command} Response sent successfully in {perf_counter() - start:.4f} sec")
         except Exception as e:
             log.exception(e)
         writer.close()
