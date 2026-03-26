@@ -104,14 +104,15 @@ def print_checks_table(response, check_type="all"):
                 interval_str = "async"
             else:
                 interval_str = ""
-            sig = info.get("signature", "")
-            rows.append((module, name, category, interval_str, sig))
+            args_str = ", ".join(info.get("args", []))
+            desc = info.get("description", "")
+            rows.append((module, name, category, interval_str, args_str, desc))
 
     if not rows:
         print("No checks found.")
         return
 
-    headers = ("Module", "Check", "Category", "Interval", "Signature")
+    headers = ("Module", "Check", "Category", "Interval", "Args", "Description")
     col_widths = [len(h) for h in headers]
     for row in rows:
         for i, val in enumerate(row):

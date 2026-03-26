@@ -220,7 +220,7 @@ class NetworkHealthChecks(HealthModule):
             log.info("carrier_changes : %s" % iface.carrier_changes)
             log.info("carrier_down_count : %s" % iface.carrier_down_count)
 
-    @healthcheck("NetworkInterfaceCheck")
+    @healthcheck("NetworkInterfaceCheck", description="Monitor network interface health")
     @Scheduler.periodic(60)
     async def run_network_checks(self):
 

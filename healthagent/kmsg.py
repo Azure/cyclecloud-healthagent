@@ -78,7 +78,7 @@ class KmsgReader(HealthModule):
         else:
             return f"LEVEL{level}"
 
-    @healthcheck("KernelLogCheck")
+    @healthcheck("KernelLogCheck", description="Monitor kernel log for critical messages")
     def read_callback(self):
         """
         Kernel Log levels:

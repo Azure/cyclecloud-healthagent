@@ -115,7 +115,7 @@ class SystemdMonitor(HealthModule):
 
             self.state[service] = active_state
 
-    @healthcheck("SystemdServiceCheck")
+    @healthcheck("SystemdServiceCheck", description="Track systemd service health")
     async def _update_services(self):
         """Build a single aggregated HealthReport from all tracked service states."""
         failed_services = [svc for svc, state in self.state.items() if state == "failed"]
