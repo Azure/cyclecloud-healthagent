@@ -414,7 +414,7 @@ def test_list_all_checks_categories():
     assert checks["EpilogOnly"]["category"] == ["epilog"]
     assert checks["PrologOnly"]["category"] == ["prolog"]
     assert checks["BackgroundOnly"]["category"] == ["background"]
-    assert checks["AsyncCallback"]["category"] == ["async"]
+    assert checks["AsyncCallback"]["category"] == ["background"]
     # Dual check should have both categories
     assert "epilog" in checks["EpilogAndBackground"]["category"]
     assert "background" in checks["EpilogAndBackground"]["category"]
@@ -426,8 +426,8 @@ def test_list_all_checks_interval():
     checks = mod.list_checks()
     assert checks["BackgroundOnly"]["interval"] == 120
     assert checks["EpilogAndBackground"]["interval"] == 60
-    assert "interval" not in checks["EpilogOnly"]
-    assert "interval" not in checks["AsyncCallback"]
+    assert checks["EpilogOnly"]["interval"] == -1
+    assert checks["AsyncCallback"]["interval"] == "async"
 
 
 def test_list_all_checks_signature():

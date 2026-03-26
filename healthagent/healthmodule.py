@@ -61,7 +61,8 @@ class HealthModule(ABC):
         """Discover all @healthcheck-decorated methods and classify them. Cached after first call.
 
         Returns:
-            {report_name: {"signature": str, "category": [str], "interval": int|None}}
+            {report_name: {"signature": str, "category": [str], "interval": int|str}}
+              interval: positive int for periodic checks, -1 for prolog/epilog-only, "async" for on-demand.
         """
         if self._checks_registry is not None:
             return self._checks_registry
@@ -89,11 +90,13 @@ class HealthModule(ABC):
                     categories.append('prolog')
                 if interval is not None and interval > 0:
                     categories.append('background')
-                if not categories:
-                    categories.append('async')
-                entry = {"signature": sig, "category": categories}
-                if interval is not None:
-                    entry["interval"] = interval
+                    entry_interval = interval
+                elif categories:
+                    entry_interval = -1
+                else:
+                    categories.append('background')
+                    entry_interval = "async"
+                entry = {"signature": sig, "category": categories, "interval": entry_interval}
                 result[report_name] = entry
         self._checks_registry = result
         return self._checks_registry
@@ -105,7 +108,7 @@ class HealthModule(ABC):
             attribute_flag: If provided (epilog/prolog), return only checks for that phase
                             as {report_name: signature_str}.
                             If None, return all checks with full metadata
-                            as {report_name: {"signature": str, "category": [str], "interval": int?}}.
+                            as {report_name: {"signature": str, "category": [str], "interval": int|str}}.
         """
         registry = self._build_checks_registry()
         if attribute_flag is None:

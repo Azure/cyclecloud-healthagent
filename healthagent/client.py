@@ -96,7 +96,14 @@ def print_checks_table(response, check_type="all"):
                 continue
             category = ", ".join(categories)
             interval = info.get("interval")
-            interval_str = f"{interval}s" if interval is not None else ""
+            if isinstance(interval, int) and interval > 0:
+                interval_str = f"{interval}s"
+            elif interval == -1:
+                interval_str = "-1"
+            elif interval == "async":
+                interval_str = "async"
+            else:
+                interval_str = ""
             sig = info.get("signature", "")
             rows.append((module, name, category, interval_str, sig))
 
