@@ -76,7 +76,7 @@ class ProcessMonitor(HealthModule):
     async def create(self):
         Scheduler.add_task(self.monitor)
 
-    @healthcheck("ProcessStateCheck")
+    @healthcheck("ProcessStateCheck", description="Detect zombie and unkillable processes")
     @epilog
     @Scheduler.periodic(60)
     async def monitor(self):

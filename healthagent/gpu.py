@@ -102,7 +102,7 @@ class GpuHealthChecks(HealthModule):
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
-    @healthcheck("GpuCountCheck")
+    @healthcheck("GpuCountCheck", description="Check OS vs PCI GPU count")
     @Scheduler.periodic(120)
     async def gpu_count_check(self):
 
@@ -121,7 +121,7 @@ class GpuHealthChecks(HealthModule):
         Scheduler.add_task(self.gpu_count_check)
         Scheduler.add_task(self.run_background_healthchecks)
 
-    @healthcheck("GpuPolicyCheck")
+    @healthcheck("GpuPolicyCheck", description="GPU policy violation checks")
     async def handle_policy_violation(self, callbackresp):
 
         health_system = self.handle_policy_violation.report_name
@@ -251,7 +251,7 @@ class GpuHealthChecks(HealthModule):
         except Exception as e:
             log.exception(e)
 
-    @healthcheck("GpuMemoryCheck")
+    @healthcheck("GpuMemoryCheck", args=["gpu_id"], description="Run GPU memory allocation test. Args: gpu_id=0,1")
     @epilog
     async def memory_allocation_test(self, gpu_id: list = None):
         health_system = self.memory_allocation_test.report_name
@@ -287,7 +287,7 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
-    @healthcheck("GpuDiagnosticCheck")
+    @healthcheck("GpuDiagnosticCheck", description="Run dcgm diagnostics checks")
     @epilog
     async def run_epilog(self):
         health_system = self.run_epilog.report_name
@@ -297,7 +297,7 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
-    @healthcheck("GpuHealthCheck")
+    @healthcheck("GpuHealthCheck", description="Periodic GPU health monitoring")
     @Scheduler.periodic(60)
     async def run_background_healthchecks(self):
         """

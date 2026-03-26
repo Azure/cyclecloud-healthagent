@@ -216,7 +216,7 @@ def test_override_base_method_no_duplicates():
 
 class FakeEpilogWithArgs(HealthModule):
 
-    @healthcheck("MemTest")
+    @healthcheck("MemTest", args=["gpu_id"])
     @epilog
     async def memory_test(self, gpu_id: list = None):
         return {"MemTest": {"status": "OK", "gpu_id": gpu_id}}
@@ -308,9 +308,9 @@ async def test_execute_bad_kwargs_logs_error(capfd):
     reporter = Reporter()
     mod = FakeEpilogWithArgs(reporter=reporter)
 
+    # DiagTest declares no args, so kwargs are stripped and it runs normally
     result = await mod.execute("epilog", checks={"DiagTest": {"nonexistent": "value"}})
-    # DiagTest does not accept 'nonexistent', so it should be skipped with an error
-    assert "DiagTest" not in result
+    assert result["DiagTest"]["status"] == "OK"
 
 
 def test_list_checks_includes_signature():
@@ -320,7 +320,7 @@ def test_list_checks_includes_signature():
     assert "MemTest" in checks
     assert "gpu_id" in checks["MemTest"]
     assert "DiagTest" in checks
-    assert checks["DiagTest"] == "()"
+    assert checks["DiagTest"] == ""
 
 
 # --- Tests for background vs on-demand distinction ---
@@ -435,7 +435,8 @@ def test_list_all_checks_signature():
     mod = FakeFullModule(reporter=reporter)
     checks = mod.list_checks()
     for name, info in checks.items():
-        assert "signature" in info
+        assert "args" in info
+        assert "description" in info
 
 
 def test_list_checks_phase_filters_from_registry():
@@ -447,7 +448,7 @@ def test_list_checks_phase_filters_from_registry():
     assert "EpilogAndBackground" in epilog_checks
     assert "BackgroundOnly" not in epilog_checks
     assert "AsyncCallback" not in epilog_checks
-    # Phase-filtered results return {name: signature_str}
+    # Phase-filtered results return {name: args_str}
     assert isinstance(epilog_checks["EpilogOnly"], str)
 
 
@@ -510,3 +511,71 @@ def test_status_prunes_with_empty_registry():
 
     assert len(reporter.store) == 0
     assert "StaleKey" not in result
+
+
+# --- Tests for args, description, and type coercion ---
+
+class FakeDescriptionModule(HealthModule):
+    """Module to test description fallback to docstring."""
+
+    @healthcheck("WithDesc", description="Explicit description")
+    @epilog
+    async def with_desc(self):
+        return {"WithDesc": {"status": "OK"}}
+
+    @healthcheck("WithDocstring")
+    @epilog
+    async def with_docstring(self):
+        """Docstring description here"""
+        return {"WithDocstring": {"status": "OK"}}
+
+    @healthcheck("NoDesc")
+    @epilog
+    async def no_desc(self):
+        return {"NoDesc": {"status": "OK"}}
+
+
+def test_description_explicit():
+    reporter = Reporter()
+    mod = FakeDescriptionModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["WithDesc"]["description"] == "Explicit description"
+
+
+def test_description_fallback_to_docstring():
+    reporter = Reporter()
+    mod = FakeDescriptionModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["WithDocstring"]["description"] == "Docstring description here"
+
+
+def test_description_empty_when_none():
+    reporter = Reporter()
+    mod = FakeDescriptionModule(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["NoDesc"]["description"] == ""
+
+
+def test_healthcheck_args_stored():
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+    checks = mod.list_checks()
+    assert checks["MemTest"]["args"] == ["gpu_id"]
+    assert checks["DiagTest"]["args"] == []
+
+
+async def test_execute_coerces_string_to_list():
+    """When a comma-separated string is passed for a list param, it should be split."""
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+    result = await mod.execute("epilog", checks={"MemTest": {"gpu_id": "0,1,2"}})
+    assert result["MemTest"]["gpu_id"] == ["0", "1", "2"]
+
+
+async def test_execute_rejects_unknown_args():
+    """Args not declared in healthcheck_args should be stripped."""
+    reporter = Reporter()
+    mod = FakeEpilogWithArgs(reporter=reporter)
+    # MemTest allows gpu_id but not 'bad_arg'
+    result = await mod.execute("epilog", checks={"MemTest": {"gpu_id": [0], "bad_arg": "x"}})
+    assert result["MemTest"]["gpu_id"] == [0]

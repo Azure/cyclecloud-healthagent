@@ -61,7 +61,7 @@ class HealthModule(ABC):
         """Discover all @healthcheck-decorated methods and classify them. Cached after first call.
 
         Returns:
-            {report_name: {"signature": str, "category": [str], "interval": int|str}}
+            {report_name: {"args": [str], "description": str, "category": [str], "interval": int|str}}
               interval: positive int for periodic checks, -1 for prolog/epilog-only, "async" for on-demand.
         """
         if self._checks_registry is not None:
@@ -81,7 +81,12 @@ class HealthModule(ABC):
                               f"declared by '{name}' in {klass.__name__}; "
                               f"previous entry will be overwritten")
                 handler = getattr(self, name)
-                sig = str(inspect.signature(handler))
+                hc_args = getattr(attr, 'healthcheck_args', [])
+                hc_desc = getattr(attr, 'healthcheck_description', None)
+                if hc_desc is None:
+                    # Fall back to first line of docstring
+                    doc = getattr(handler, '__doc__', None)
+                    hc_desc = doc.strip().split('\n')[0].strip() if doc else ""
                 interval = getattr(attr, 'interval', None)
                 categories = []
                 if getattr(attr, 'epilog', False):
@@ -96,7 +101,7 @@ class HealthModule(ABC):
                 else:
                     categories.append('background')
                     entry_interval = "async"
-                entry = {"signature": sig, "category": categories, "interval": entry_interval}
+                entry = {"args": hc_args, "description": hc_desc, "category": categories, "interval": entry_interval}
                 result[report_name] = entry
         self._checks_registry = result
         return self._checks_registry
@@ -106,15 +111,36 @@ class HealthModule(ABC):
 
         Args:
             attribute_flag: If provided (epilog/prolog), return only checks for that phase
-                            as {report_name: signature_str}.
+                            as {report_name: args_str}.
                             If None, return all checks with full metadata
-                            as {report_name: {"signature": str, "category": [str], "interval": int|str}}.
+                            as {report_name: {"args": [str], "description": str, "category": [str], "interval": int|str}}.
         """
         registry = self._build_checks_registry()
         if attribute_flag is None:
             return registry
-        return {name: info["signature"] for name, info in registry.items()
+        return {name: ", ".join(info["args"]) for name, info in registry.items()
                 if attribute_flag in info["category"]}
+
+    @staticmethod
+    def _coerce_kwargs(handler, kwargs: dict) -> dict:
+        """Coerce string kwargs to match the handler's type annotations.
+
+        Converts comma-separated strings to lists when the annotation is `list`,
+        and strings to ints when the annotation is `int`.
+        """
+        if not kwargs:
+            return kwargs
+        sig = inspect.signature(handler)
+        coerced = {}
+        for key, value in kwargs.items():
+            param = sig.parameters.get(key)
+            if param and param.annotation is not inspect.Parameter.empty:
+                if param.annotation is list and isinstance(value, str):
+                    value = value.split(',')
+                elif param.annotation is int and isinstance(value, str):
+                    value = int(value)
+            coerced[key] = value
+        return coerced
 
     async def execute(self, attribute_flag: str, checks: dict = None) -> dict:
         """Execute handlers for the given flag.
@@ -139,14 +165,21 @@ class HealthModule(ABC):
             else:
                 kwargs = {}
             try:
-                # Pre-validate kwargs to distinguish bad caller args from handler bugs
+                # Filter kwargs to only allowed args declared in the decorator
                 if kwargs:
-                    try:
-                        inspect.signature(handler).bind(**kwargs)
-                    except TypeError as e:
-                        log.error(f"[{attribute_flag}] Invalid arguments for {handler.__name__} "
-                                  f"(report_name={report_name}): {e}")
-                        continue
+                    allowed_args = set(getattr(handler, 'healthcheck_args', []))
+                    if allowed_args:
+                        rejected = set(kwargs.keys()) - allowed_args
+                        if rejected:
+                            log.error(f"[{attribute_flag}] Rejected unknown args {rejected} for "
+                                      f"{handler.__name__} (report_name={report_name}). "
+                                      f"Allowed: {allowed_args}")
+                            kwargs = {k: v for k, v in kwargs.items() if k in allowed_args}
+                    else:
+                        log.error(f"[{attribute_flag}] {handler.__name__} (report_name={report_name}) "
+                                  f"does not accept user arguments. Ignoring kwargs.")
+                        kwargs = {}
+                    kwargs = self._coerce_kwargs(handler, kwargs)
                 if inspect.iscoroutinefunction(handler):
                     ans = await handler(**kwargs)
                 else:
