@@ -3,8 +3,8 @@
 These tests validate the aggregation behavior without requiring dbus or systemd.
 We subclass SystemdMonitor to stub out get_journal_entries and skip create().
 """
-from unittest.mock import AsyncMock, patch
-from healthagent.reporter import Reporter, HealthReport, HealthStatus
+from unittest.mock import AsyncMock
+from healthagent.reporter import Reporter, HealthStatus
 from healthagent.async_systemd import SystemdMonitor
 
 

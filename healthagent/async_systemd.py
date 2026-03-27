@@ -16,6 +16,8 @@ class SystemdMonitor(HealthModule):
     Monitors the state of systemd services and reports unhealthy services based on their state.
     Purpose of this healthcheck is NOT to report any errors in a systemd service but only when the service reaches
     a failed state or recovers from the failed state.
+
+    documentation: https://www.freedesktop.org/wiki/Software/systemd/dbus/
     """
 
     def __init__(self, reporter: Reporter):
@@ -113,7 +115,6 @@ class SystemdMonitor(HealthModule):
                     self.state[service] = active_state
                     await self._update_services()
 
-            self.state[service] = active_state
 
     @healthcheck("SystemdServiceCheck", description="Track systemd service health")
     async def _update_services(self):

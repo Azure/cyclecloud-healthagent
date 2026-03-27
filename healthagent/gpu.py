@@ -1,16 +1,12 @@
 import asyncio
 import sys
-import json
-import time
 import logging
 import os
-from time import time
 import shutil
 from datetime import datetime
 from healthagent import epilog,status,healthcheck
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
-from dataclasses import asdict
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
 from healthagent.bindings import *
 
@@ -364,7 +360,7 @@ class GpuHealthChecks(HealthModule):
             try:
                 self.setup()
             except Wrap.DcgmConnectionFail as e:
-                log.critical("Unable to connect to DCGM: {e}")
+                log.critical(f"Unable to connect to DCGM: {e}")
                 log.critical("To re-instantiate checks, restart the nvidia-dcgm service.")
             else:
                 log.info("Re-initialized our connection to DCGM.")
