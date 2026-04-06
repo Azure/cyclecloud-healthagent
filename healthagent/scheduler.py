@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 from concurrent.futures import ProcessPoolExecutor
 import multiprocessing
@@ -77,7 +78,7 @@ class Scheduler:
         # Don't re-schedule periodic task if cancellation event is set
         elif interval > 0:
             loop = asyncio.get_running_loop()
-            loop.call_later(interval, self.add_task, function, *args)
+            loop.call_later(interval, functools.partial(self.add_task, function, *args, **kwargs))
 
         return out
 
@@ -104,7 +105,7 @@ class Scheduler:
                 max_workers=1,
                 mp_context=multiprocessing.get_context("spawn")
             )
-            future = loop.run_in_executor(pool, function, *args)
+            future = loop.run_in_executor(pool, functools.partial(function, *args, **kwargs))
 
             # Clean up pool once future is done
             def shutdown_pool(_):

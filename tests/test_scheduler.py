@@ -27,6 +27,15 @@ async def periodic_task2(queue: asyncio.Queue, myarg: str = "Default"):
     except asyncio.QueueFull:
         Scheduler.cancel_task()
 
+@Scheduler.periodic(0.01)
+async def periodic_task_kwargs(queue: asyncio.Queue, myarg: str = "Default"):
+
+    now = time()
+    try:
+        queue.put_nowait((now, myarg))
+    except asyncio.QueueFull:
+        Scheduler.cancel_task()
+
 class A:
     @Scheduler.periodic(2)
     @classmethod
@@ -46,11 +55,20 @@ class A:
             Scheduler.cancel_task()
 
 @Scheduler.pool
-def on_demand_task(sleep_t: int = 10):
+def on_demand_task(sleep_t: int = 1):
 
     # blocking work.
     sleep(sleep_t)
     return sleep_t
+
+@Scheduler.pool
+def on_demand_task_kwargs(value: int = 1, multiplier: int = 1):
+
+    return value * multiplier
+
+async def async_task_kwargs(value: int = 1, multiplier: int = 1):
+
+    return value * multiplier
 
 def handler(signum, frame):
 
@@ -89,6 +107,36 @@ async def test_subprocess():
     stdout, _ = await out.communicate()
     import socket
     assert socket.gethostname() == stdout.decode().strip()
+    Scheduler.stop()
+
+
+async def test_async_kwargs():
+
+    Scheduler.start()
+    rc = await Scheduler.add_task(async_task_kwargs, value=5, multiplier=3)
+    assert rc == 15
+    Scheduler.stop()
+
+
+async def test_periodic_kwargs():
+
+    Scheduler.start()
+    q1 = asyncio.Queue(maxsize=2)
+    Scheduler.add_task(periodic_task_kwargs, q1, myarg="hello_from_kwargs")
+    await asyncio.sleep(0.05)
+    Scheduler.stop()
+    assert q1.qsize() == 2
+    (_, arg1) = q1.get_nowait()
+    (_, arg2) = q1.get_nowait()
+    assert arg1 == "hello_from_kwargs"
+    assert arg2 == "hello_from_kwargs"
+
+
+async def test_pool_kwargs():
+
+    Scheduler.start()
+    rc = await Scheduler.add_task(on_demand_task_kwargs, value=5, multiplier=3)
+    assert rc == 15
     Scheduler.stop()
 
 
