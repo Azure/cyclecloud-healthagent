@@ -6,7 +6,7 @@ def main():
     os.makedirs(etc_dir, exist_ok=True)
 
     # Copy example scripts
-    for fname in ["health.sh.example", "epilog.sh.example"]:
+    for fname in ["health.sh.example", "epilog.sh.example", "prolog.sh.example"]:
         src = os.path.join(os.path.dirname(__file__), "etc", fname)
         dst = os.path.join(etc_dir, fname)
         shutil.copy2(src, dst)

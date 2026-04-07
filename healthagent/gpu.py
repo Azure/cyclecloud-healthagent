@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from datetime import datetime, timezone
-from healthagent import epilog,status,healthcheck
+from healthagent import epilog,status,healthcheck,prolog
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
@@ -243,6 +243,7 @@ class GpuHealthChecks(HealthModule):
 
     @healthcheck("GpuMemoryCheck", args=["gpu_id"], description="Run GPU memory allocation test. Args: gpu_id=0,1")
     @epilog
+    @prolog
     async def memory_allocation_test(self, gpu_id: list = None):
         health_system = self.memory_allocation_test.report_name
         report = HealthReport()
@@ -277,11 +278,19 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
-    @healthcheck("GpuDiagnosticCheck", description="Run dcgm diagnostics checks")
+    DIAG_DEFAULTS = {
+        "prolog": {"tests": "short", "params": ""},
+        "epilog": {"tests": "medium", "params": ""},
+    }
+    @healthcheck("GpuDiagnosticCheck", description="Run DCGM diagnostics checks. Eg. Args: gpu_id=0,1 tests=memory", args=['gpu_id','tests', 'params'])
     @epilog
-    async def run_epilog(self):
-        health_system = self.run_epilog.report_name
-        report = await Scheduler.add_task(run_active_healthchecksv2)
+    @prolog
+    async def run_diag(self, gpu_id: list = None, tests: str = '', params: str = '', _phase: str = None):
+        phase_defaults = self.DIAG_DEFAULTS.get(_phase, {})
+        tests = tests or phase_defaults.get("tests", "")
+        params = params or phase_defaults.get("params", "")
+        health_system = self.run_diag.report_name
+        report = await Scheduler.add_task(run_active_healthchecksv2, gpu_id=gpu_id, tests=tests, params=params)
         await self.reporter.update_report(name=health_system, report=report)
         response = {}
         response[health_system] = report.view()
@@ -390,7 +399,7 @@ def _diag_entry():
     return {"errors": [], "warnings": [], "suppressed": []}
 
 @Scheduler.pool
-def run_active_healthchecksv2():
+def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str = ''):
 
     """
     Run active healthchecks, before or after a job.
@@ -410,11 +419,12 @@ def run_active_healthchecksv2():
         diag_log = os.path.join(log_dir, "nvvs_diag.log")
 
         dcgmGroup, dcgmHandle = Wrap.connect(grp_name="epilog")
-        gpu_ids = dcgmGroup.GetGpuIds()
-        params = "memory.minimum_allocation_percentage=90;memory.is_allowed=true"
-        #TODO: Later we can make this list come based on background health check errors. For example, only run pcie test if we detected pcie issues.
-        tests = "memory,pcie"
-        dd = DcgmDiag.DcgmDiag(gpuIds=gpu_ids, testNamesStr=tests, paramsStr=params)
+        if gpu_id is None:
+            gpu_id = dcgmGroup.GetGpuIds()
+
+        #params = "memory.minimum_allocation_percentage=90;memory.is_allowed=true"
+        #tests = "software,memory,pcie"
+        dd = DcgmDiag.DcgmDiag(gpuIds=gpu_id, testNamesStr=tests, paramsStr=params)
 
         if os.path.exists(log_dir):
             # Rotate if file is too large ( > 50MB)
