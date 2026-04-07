@@ -180,6 +180,10 @@ class HealthModule(ABC):
                                   f"does not accept user arguments. Ignoring kwargs.")
                         kwargs = {}
                     kwargs = self._coerce_kwargs(handler, kwargs)
+                # Inject _phase so handlers can apply phase-specific defaults
+                sig = inspect.signature(handler)
+                if '_phase' in sig.parameters:
+                    kwargs['_phase'] = attribute_flag
                 if inspect.iscoroutinefunction(handler):
                     ans = await handler(**kwargs)
                 else:
