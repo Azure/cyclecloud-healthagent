@@ -139,6 +139,62 @@ def test_make_json_safe_with_custom_class_enum_datetime_set():
         assert False, f"make_json_safe failed on custom class with enum, datetime, set: {e}"
 
 
+def test_aux_data_excluded_from_view():
+    """aux_data should never appear in view() output."""
+    report = HealthReport(
+        status=HealthStatus.ERROR,
+        description="GPU failure",
+        aux_data={"raw_stdout": "some debug output", "exit_code": 1},
+    )
+    view = report.view()
+    assert "aux_data" not in view
+    assert "raw_stdout" not in view
+    assert "exit_code" not in view
+    # Normal fields should still be present
+    assert view["status"] == "Error"
+    assert view["description"] == "GPU failure"
+
+
+def test_aux_data_excluded_from_equality():
+    """Two reports differing only in aux_data should be equal."""
+    r1 = HealthReport(status=HealthStatus.WARNING, description="test")
+    r2 = HealthReport(
+        status=HealthStatus.WARNING,
+        description="test",
+        aux_data={"debug": "info"},
+    )
+    assert r1 == r2
+
+
+def test_aux_data_not_in_summarize():
+    """Summarize output must not contain aux_data."""
+    reporter = Reporter()
+    reporter.publish_cc = False
+    name = "gpu_test"
+    report = HealthReport(
+        status=HealthStatus.ERROR,
+        description="fail",
+        aux_data={"internal_log": "verbose data"},
+    )
+    reporter.store[name] = report
+    summary = reporter.summarize()
+    assert "aux_data" not in summary[name]
+    assert "internal_log" not in summary[name]
+
+
+def test_aux_data_accessible_on_report():
+    """Modules should be able to read/write aux_data directly."""
+    report = HealthReport(aux_data={"key": "val"})
+    assert report.aux_data == {"key": "val"}
+    report.aux_data["key2"] = 42
+    assert report.aux_data["key2"] == 42
+
+
+def test_aux_data_defaults_to_none():
+    report = HealthReport()
+    assert report.aux_data is None
+
+
 async def test_reporter():
 
     my_reporter = Reporter()
