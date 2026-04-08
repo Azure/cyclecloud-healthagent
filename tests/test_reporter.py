@@ -195,6 +195,29 @@ def test_aux_data_defaults_to_none():
     assert report.aux_data is None
 
 
+async def test_aux_data_persisted_on_dedup():
+    """aux_data should be updated even when visible report fields are unchanged."""
+    reporter = Reporter()
+    reporter.publish_cc = False
+    name = "gpu_test"
+
+    r1 = HealthReport(status=HealthStatus.ERROR, description="fail")
+    r1.aux_data = {0: {"errors": ["GPU 0 failed"], "warnings": []}}
+    await reporter.update_report(name, r1)
+    assert reporter.store[name].aux_data == {0: {"errors": ["GPU 0 failed"], "warnings": []}}
+
+    # Same visible fields, different aux_data — should still persist
+    r2 = HealthReport(status=HealthStatus.ERROR, description="fail")
+    r2.aux_data = {0: {"errors": ["GPU 0 failed"], "warnings": []}, 1: {"errors": ["GPU 1 failed"], "warnings": []}}
+    await reporter.update_report(name, r2)
+    assert reporter.store[name].aux_data == r2.aux_data
+
+    # Reset with blank report — aux_data should become None
+    r3 = HealthReport()
+    await reporter.update_report(name, r3)
+    assert reporter.store[name].aux_data is None
+
+
 async def test_reporter():
 
     my_reporter = Reporter()
