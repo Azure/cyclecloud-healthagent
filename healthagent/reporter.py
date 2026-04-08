@@ -1,9 +1,9 @@
 import copy
 from enum import Enum
-from dataclasses import dataclass, asdict, is_dataclass, field
+from dataclasses import dataclass, asdict, is_dataclass, field, InitVar
 from datetime import datetime, timedelta, timezone
 from time import time
-from typing import Any,Dict
+from typing import Any, Dict
 import logging
 import os
 from healthagent.scheduler import Scheduler
@@ -80,6 +80,11 @@ class HealthReport:
     last_update: datetime = field(init=False)
     "custom module specific data"
     custom_fields: Dict[str, Any] = None
+    # InitVar: aux_data is accepted by __init__ but excluded from dataclass fields,
+    # so asdict() / equality / view() never see it. It is stored as a plain instance
+    # attribute in __post_init__. Note: aux_data will not survive an asdict() round-trip;
+    # use deepcopy(report) to preserve it.
+    aux_data: InitVar[Dict[str, Any]] = None
 
     def __eq__(self, other):
         if not isinstance(other, HealthReport):
@@ -91,9 +96,10 @@ class HealthReport:
         d2.pop('last_update', None)
         return d1 == d2
 
-    def __post_init__(self):
+    def __post_init__(self, aux_data: Dict[str, Any] | None):
         if self.custom_fields is None:
             self.custom_fields = {}
+        self.aux_data = aux_data
         self.last_update = datetime.now(tz=timezone.utc)
 
     def __getattr__(self, item):
@@ -113,6 +119,11 @@ class HealthReport:
             self.status = new_status
 
     def view(self) -> Dict[str, Any]:
+        """
+        View method shows the healthreport in its final form.
+        aux_data is an InitVar and is excluded from asdict() automatically.
+        Custom fields are module specific and are merged to top_level.
+        """
         # Convert the dataclass to a dictionary
         base_dict = make_json_safe(asdict(self))
         # Merge custom_fields into the top-level dictionary
