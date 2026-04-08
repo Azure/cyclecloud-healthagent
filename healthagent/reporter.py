@@ -84,7 +84,7 @@ class HealthReport:
     # so asdict() / equality / view() never see it. It is stored as a plain instance
     # attribute in __post_init__. Note: aux_data will not survive an asdict() round-trip;
     # use deepcopy(report) to preserve it.
-    aux_data: InitVar[Dict[str, Any]] = None
+    aux_data: InitVar[dict] = None
 
     def __eq__(self, other):
         if not isinstance(other, HealthReport):
@@ -96,7 +96,7 @@ class HealthReport:
         d2.pop('last_update', None)
         return d1 == d2
 
-    def __post_init__(self, aux_data: Dict[str, Any] | None):
+    def __post_init__(self, aux_data: dict | None):
         if self.custom_fields is None:
             self.custom_fields = {}
         self.aux_data = aux_data
@@ -215,11 +215,14 @@ class Reporter:
         report.last_update = datetime.now(tz=timezone.utc)
         last_report = self.store.get(name)
         if not last_report or (last_report != report):
-            self.store[name] = report
+            self.store[name] = copy.deepcopy(report)
             await self.publish_cc_status(name)
         else:
-            # still update the last_update
+            # aux_data is excluded from equality (InitVar), so always copy it
+            # to ensure modules that update aux_data between identical reports
+            # don't silently lose state.
             self.store[name].last_update = report.last_update
+            self.store[name].aux_data = copy.deepcopy(report.aux_data)
 
     async def publish_cc_status(self, name):
 
