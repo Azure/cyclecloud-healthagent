@@ -3,7 +3,7 @@ import sys
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from healthagent import epilog,status,healthcheck
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
@@ -45,6 +45,7 @@ class GpuHealthChecks(HealthModule):
         self.dcgmHandle = None
         self.watch_fields = []
         self.gpu_config = []
+        self.xid_history = {}
         if self.test_mode:
             log.info("Running GPU tests in DCGM_TEST_MODE")
         self.dcgmGroup, self.dcgmHandle = Wrap.connect(grp_name="healthagent_group", test_mode=self.test_mode)
@@ -61,7 +62,7 @@ class GpuHealthChecks(HealthModule):
         """
 
         # TODO: These limits will come from a configuration file eventually.
-        policy = Wrap.set_policy(mpe=8)
+        policy = Wrap.set_policy()
         self.dcgmGroup.policy.Set(policy)
         self.c_callback = create_c_callback(self.handle_policy_violation, asyncio.get_running_loop())
         self.dcgmGroup.policy.Register(policy.condition, self.c_callback, None)
@@ -71,16 +72,11 @@ class GpuHealthChecks(HealthModule):
         """
         Setup field watches and health watches.
         """
-        # TODO: Add more fields to watch fields in addition to policy fields
-        # but for now just add policy fields.
         self.watch_fields = Wrap.get_fields()
-        self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group_instant", fieldIds=self.watch_fields)
+        self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=self.watch_fields)
         # UpdateFreq is in microseconds. So we are updating every 1 second.
-        # MaxKeepAge:  is how long samples are stored in memory, in seconds. 0 means maxkeepsamples enforces the bounds.
-        # maxkeepsamples: how many samples are stored in DCGM Cache. For this particular field group, we only ever read the latest value. See function track_fields.
-        # Storing last 10 samples (or last 10 seconds of data) is more than enough and effectively  bounds the memory.
-        # If we need historical trending for a field group we will create a new field group with appropriate retention policies.
-        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=0, maxKeepSamples=10)
+        # maxKeepSamples=60 bounds memory. We read the latest value each cycle.
+        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=0, maxKeepSamples=60)
         ## Add the health watches
         self.dcgmGroup.health.Set(Wrap.get_health_mask())
 
@@ -117,135 +113,133 @@ class GpuHealthChecks(HealthModule):
         Scheduler.add_task(self.gpu_count_check)
         Scheduler.add_task(self.run_background_healthchecks)
 
-    @healthcheck("GpuPolicyCheck", description="GPU policy violation checks")
     async def handle_policy_violation(self, callbackresp):
 
-        health_system = self.handle_policy_violation.report_name
-        report = self.reporter.get_report(health_system) or HealthReport()
         condition = callbackresp.condition
-        gpuid = callbackresp.gpuId
-        harmless_xid = [ 43, 63 ]
         try:
             condition_str = Wrap.dcgm_condition_to_string(condition=condition)
+            if condition == dcgm_structs.DCGM_POLICY_COND_XID:
+                gpuid = callbackresp.gpuId
+                xid_received = callbackresp.val.xid.errnum
+                unix_ts = callbackresp.val.xid.timestamp
+                timestamp = datetime.fromtimestamp(unix_ts / 1_000_000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S UTC")
+                log.critical("XID detected: %d  on gpu: %d" % (xid_received, gpuid))
+                gpu_key = f'GPU_{gpuid}'
+                if gpu_key not in self.xid_history:
+                    self.xid_history[gpu_key] = {}
+                if xid_received not in self.xid_history[gpu_key] or timestamp < self.xid_history[gpu_key][xid_received]["timestamp"]:
+                    self.xid_history[gpu_key][xid_received] = {"xid": xid_received, "timestamp": timestamp}
         except ValueError as e:
             log.exception(e)
             return
 
-        log.critical("Violation detected: %s  on gpu: %d" % (condition_str, gpuid))
+    # TODO: Adding all config file attributes as class objects for now.
+    XID_WARNING = [43, 63, 13, 31, 66, 94, 154]
+    XID_IGNORE = []
+    XID_ERROR = []
 
-        if condition_str not in report.custom_fields:
-            report.custom_fields[condition_str] = {}
-            # violation data is a 2D dict containing violation results indexed by condition and gpu id. vd[condition][gpuid]
-            vd = {}
-        else:
-            vd = report.custom_fields[condition_str]
-
-        #vd['timestamp'] = condition.val.timestamp
-        if gpuid not in vd:
-            vd[gpuid] = {}
-
-        info = vd[gpuid]
-        if condition == dcgm_structs.DCGM_POLICY_COND_DBE:
-            if 'location' not in info:
-                info['location'] = set()
-            info['location'].add(next(key for key, value in dcgm_structs.c_dcgmPolicyConditionDbe_t.LOCATIONS.items() if value == callbackresp.val.dbe.location))
-            info['numerrors'] = callbackresp.val.dbe.numerrors
-            info['details'] = f"Double-Bit ECC errors({info['numerrors']}) found at location: {info['location']} on GPU: {gpuid}"
-            report.escalate(HealthStatus.ERROR)
-        elif condition == dcgm_structs.DCGM_POLICY_COND_PCI:
-            info['replay_count'] = callbackresp.val.pci.counter
-            info['details'] = f"PCI replay count({info['replay_count']}) on GPU: {gpuid}"
-            report.escalate(HealthStatus.ERROR)
-        elif condition == dcgm_structs.DCGM_POLICY_COND_NVLINK:
-            info['error_count'] = callbackresp.val.nvlink.counter
-            if 'field_id' not in info:
-                info['field_id'] = set()
-            info['field_id'].add(callbackresp.val.nvlink.fieldId)
-            info['details'] = f"Nvlink violation on GPU: {gpuid}"
-            report.escalate(HealthStatus.ERROR)
-        elif condition == dcgm_structs.DCGM_POLICY_COND_XID:
-            if 'xid_error' not in info:
-                info['xid_error'] = set()
-            info['xid_error'].add(callbackresp.val.xid.errnum)
-            info['details'] = f"XID errors found: XID {info['xid_error']} on GPU {gpuid}"
-            # Harmless XIDs are warnings; others are errors
-            if info['xid_error'].issubset(set(harmless_xid)):
-                report.escalate(HealthStatus.WARNING)
-            else:
-                report.escalate(HealthStatus.ERROR)
-        # elif condition == dcgm_structs.DCGM_POLICY_COND_THERMAL:
-        #     report.escalate(HealthStatus.WARNING)
-        #     info['temperature'] = callbackresp.val.thermal.thermalViolation
-        #     info['details'] = f"Thermal violation detected: Temperature reached {info['temperature']} Celsius GPU: {gpuid}"
-        # elif condition == dcgm_structs.DCGM_POLICY_COND_POWER:
-        #     report.escalate(HealthStatus.WARNING)
-        #     info['power'] = callbackresp.val.power.powerViolation
-        #     info['details'] = f"Power violation detected: Power draw {info['power']} Watts GPU: {gpuid}"
-        elif condition == dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED:
-            info['sbepage_count'] = callbackresp.val.mpr.sbepages
-            info['dbepage_count'] = callbackresp.val.mpr.dbepages
-            info['details'] = f"Max retired pages violation: SBE retired pages: {info['sbepage_count']}, DBE retired pages {info['dbepage_count']} GPU: {gpuid}"
-            report.escalate(HealthStatus.ERROR)
-
-        vd[gpuid] = info
-        report.custom_fields[condition_str] = vd
-        report.description = "GPU Policy Violations detected"
-        if not report.details:
-            report.details = info['details']
-        else:
-            # regenerate
-            report.details = ""
-            for condition in report.custom_fields:
-                for gpu in report.custom_fields[condition]:
-                    report.details += f"\n{report.custom_fields[condition][gpu]['details']}"
-        await self.reporter.update_report(name=health_system, report=report)
-        return
-
+    @staticmethod
+    def _gpu_entry():
+        return {"errors": [], "warnings": [], "xid": []}
 
     def track_fields(self):
 
         """
         Read field values from DCGM.
+        All fields (polled and event-driven) are read via GetLatest_v2.
+        XIDs are deduplicated and accumulated in self.xid_history for the node's lifetime.
         """
 
-        errors = []
-        category = []
+        custom_fields = {}
+        custom_fields['error_count'] = 0
+        custom_fields['category'] = set()
         try:
-            response = self.dcgmGroup.samples.GetLatest(self.field_group)
-            for gpu in response.values:
-
-                curr_temp = response.values[gpu][Wrap.fields.GPUTEMP][0].value
-                slowdown_temp = response.values[gpu][Wrap.fields.GPUTEMP_SLOWDOWN][0].value
+            response = self.dcgmGroup.samples.GetLatest_v2(self.field_group)
+            gpu_values = response.values.get(dcgm_fields.DCGM_FE_GPU, {})
+            for gpu in gpu_values:
+                gpu_id = f'GPU_{gpu}'
+                custom_fields.setdefault(gpu_id, self._gpu_entry())
+                # Handle Thermal
+                curr_temp = gpu_values[gpu][Wrap.fields.GPUTEMP][0].value
+                slowdown_temp = gpu_values[gpu][Wrap.fields.GPUTEMP_SLOWDOWN][0].value
                 if curr_temp >= (0.95*slowdown_temp):
                     msg = f"GPU temperature reached very close to the slowdown limit gpu: {gpu} Curr temp: {curr_temp}, slowdown limit: {slowdown_temp}"
-                    errors.append(msg)
-                    category.append("Thermal")
-
-                clock_reason = response.values[gpu][Wrap.fields.CLOCK_REASON][0].value
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("Thermal")
+                # Clocks
+                clock_reason = gpu_values[gpu][Wrap.fields.CLOCK_REASON][0].value
                 throttle_reasons = Wrap.get_throttle_reasons(clock_reason)
                 if throttle_reasons:
-                    errors.extend(throttle_reasons)
-                    category.append("Clocks")
-                fabric_status = response.values[gpu][Wrap.fields.FABRIC_STATUS][0].value
+                    custom_fields[gpu_id]["errors"].append(throttle_reasons)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("Clocks")
+                # Fabric errors
+                fabric_status = gpu_values[gpu][Wrap.fields.FABRIC_STATUS][0].value
                 if fabric_status == dcgm_structs.DcgmFMStatusFailure:
-                    fabric_error = response.values[gpu][Wrap.fields.FABRIC_ERROR][0].value
+                    fabric_error = gpu_values[gpu][Wrap.fields.FABRIC_ERROR][0].value
                     msg = f"Fabric Manager finished training but failed, error code: {fabric_error}"
-                    errors.append(msg)
-                    category.append("FabricManager")
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("FabricManager")
                 elif fabric_status == dcgm_structs.DcgmFMStatusInProgress:
-                    fabric_error = response.values[gpu][Wrap.fields.FABRIC_ERROR][0].value
+                    fabric_error = gpu_values[gpu][Wrap.fields.FABRIC_ERROR][0].value
                     msg = f"Fabric Manager not running, training in progress, error code: {fabric_error}"
-                    errors.append(msg)
-                    category.append("FabricManager")
-                persistence_mode = response.values[gpu][Wrap.fields.PERSISTENCE_MODE][0].value
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("FabricManager")
+                # Persistence mode
+                persistence_mode = gpu_values[gpu][Wrap.fields.PERSISTENCE_MODE][0].value
                 if persistence_mode != 1:
                     msg = f"Persistence Mode not set for GPU: {gpu}, Restart nvidia-persistenced or Reboot the system."
-                    errors.append(msg)
-                    category.append("System")
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("System")
+                # Row Remap failures
+                row_remap_failure = gpu_values[gpu][Wrap.fields.ROW_REMAP_FAIL][0].value
+                if row_remap_failure:
+                    msg = f"GPU {gpu}: {dcgm_errors.DCGM_FR_ROW_REMAP_FAILURE_MSG} {dcgm_errors.DCGM_FR_ROW_REMAP_FAILURE_NEXT}"
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("Memory")
+                # DBE error
+                dbe_error = gpu_values[gpu][Wrap.fields.DBE_ERRORS][0].value
+                if dbe_error > 0:
+                    msg = f"{dcgm_errors.DCGM_FR_VOLATILE_DBE_DETECTED_MSG % (dbe_error, gpu)} {dcgm_errors.DCGM_FR_VOLATILE_DBE_DETECTED_NEXT}"
+                    custom_fields[gpu_id]["errors"].append(msg)
+                    custom_fields['error_count'] += 1
+                    custom_fields['category'].add("Memory")
+                # XID - read latest, deduplicate by xid number per GPU, keep earliest timestamp
+                xid_samples = gpu_values[gpu].get(Wrap.fields.XID_ERRORS, [])
+                if gpu_id not in self.xid_history:
+                    self.xid_history[gpu_id] = {}
+                for sample in xid_samples:
+                    if not sample.isBlank:
+                        xid_num = sample.value
+                        ts_utc = datetime.fromtimestamp(sample.ts / 1_000_000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S UTC")
+                        if xid_num not in self.xid_history[gpu_id] or ts_utc < self.xid_history[gpu_id][xid_num]["timestamp"]:
+                            self.xid_history[gpu_id][xid_num] = {"xid": xid_num, "timestamp": ts_utc}
 
-            return errors, category
+            # Populate report with full XID history
+            for gpu_id, xids in self.xid_history.items():
+                custom_fields.setdefault(gpu_id, self._gpu_entry())
+                for entry in xids.values():
+                    xid_num = entry["xid"]
+                    if xid_num in self.XID_IGNORE:
+                        severity = "ignore"
+                    elif xid_num in self.XID_WARNING:
+                        severity = "warning"
+                    else:
+                        severity = "error"
+                        custom_fields['error_count'] += 1
+                    custom_fields[gpu_id]['xid'].append({**entry, "severity": severity})
+                if xids:
+                    custom_fields['category'].add("XID")
+
+            return custom_fields
         except Exception as e:
             log.exception(e)
+            return custom_fields
 
     @healthcheck("GpuMemoryCheck", args=["gpu_id"], description="Run GPU memory allocation test. Args: gpu_id=0,1")
     @epilog
@@ -293,6 +287,7 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
+
     @healthcheck("GpuHealthCheck", description="Periodic GPU health monitoring")
     @Scheduler.periodic(60)
     async def run_background_healthchecks(self):
@@ -313,37 +308,47 @@ class GpuHealthChecks(HealthModule):
                 group_health = self.dcgmGroup.health.Check()
                 incident_count = group_health.incidentCount
 
-                field_errors, category = self.track_fields()
-                if len(field_errors) > 0:
+                custom_fields = self.track_fields()
+                if custom_fields.get('error_count', 0) > 0:
                     report.escalate(HealthStatus.ERROR)
-                if report.status == HealthStatus.OK and incident_count == 0:
+
+                for index in range (0, incident_count):
+                    entity_id = group_health.incidents[index].entityInfo.entityId
+                    if entity_id == dcgm_fields.DCGM_FE_GPU:
+                        entity = f"GPU_{entity_id}"
+                        custom_fields.setdefault(entity, self._gpu_entry())
+                    else:
+                        entity = "overall"
+                        custom_fields.setdefault(entity, {"errors": [], "warnings": []})
+                    system = Wrap.convert_system_enum_to_system_name(group_health.incidents[index].system)
+                    error_code = group_health.incidents[index].error.code
+                    if error_code in Wrap.HEALTH_WARNINGS:
+                        custom_fields[entity]['warnings'].append(group_health.incidents[index].error.msg)
+                        report.escalate(HealthStatus.WARNING)
+                        subsystems.add(system)
+                    elif error_code in Wrap.HEALTH_ERRORS:
+                        report.escalate(HealthStatus.ERROR)
+                        custom_fields[entity]['errors'].append(group_health.incidents[index].error.msg)
+                        subsystems.add(system)
+                        custom_fields['error_count'] += 1
+                    else:
+                        #ignore
+                        continue
+
+                #details.extend(field_errors)
+                custom_fields['category'].update(subsystems)
+                report.custom_fields = {
+                    k: v for k, v in custom_fields.items()
+                    if not isinstance(v, dict) or any(v.values())
+                }
+
+                if custom_fields['error_count'] == 0:
                     await self.reporter.update_report(name=health_system, report=report)
                     return
 
-                for index in range (0, incident_count):
-                    gpu_id = group_health.incidents[index].entityInfo.entityId
-                    system = Wrap.convert_system_enum_to_system_name(group_health.incidents[index].system)
-                    error_code = group_health.incidents[index].error.code
-                    if error_code == dcgm_errors.DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD:
-                        report.escalate(HealthStatus.WARNING)
-                    else:
-                        incident_status = Wrap.convert_health_to_status(group_health.incidents[index].health)
-                        if incident_status == HealthStatus.NA:
-                            log.error(f"Invalid health status receieved {system}, {error_code}")
-                        elif incident_status != HealthStatus.NA:
-                            report.escalate(incident_status)
-                    subsystems.add(system)
-                    details.append(group_health.incidents[index].error.msg)
-
-                details.extend(field_errors)
-                subsystems.update(category)
-                incident_count += len(field_errors)
-                description = f"{health_system} report {report.status.value} count={incident_count} subsystem={', '.join(subsystems)}"
-                custom_fields['categories'] = subsystems
-                custom_fields['error_count'] = incident_count
+                description = f"{health_system} report {custom_fields['error_count']} errors of type {', '.join(custom_fields['category'])}"
                 report.description = description
                 report.details = '\n'.join(details)
-                report.custom_fields = custom_fields
                 await self.reporter.update_report(name=health_system, report=report)
                 return
 
@@ -381,6 +386,9 @@ class GpuHealthChecks(HealthModule):
             ## disconnect from the hostengine by deleting the DcgmHandle object
             del(self.dcgmHandle)
 
+def _diag_entry():
+    return {"errors": [], "warnings": [], "suppressed": []}
+
 @Scheduler.pool
 def run_active_healthchecksv2():
 
@@ -393,9 +401,8 @@ def run_active_healthchecksv2():
     isHealthy = True
     report = HealthReport()
     custom_fields = {}
-
-    failures = list()
-    info_msgs = list()
+    custom_fields['error_count'] = 0
+    response = None
     try:
         #TODO: Find a better way to get this directory later.
         log_dir = "/opt/healthagent"
@@ -433,46 +440,41 @@ def run_active_healthchecksv2():
         response = dd.Execute(handle=dcgmHandle.handle)
 
     except Wrap.DcgmConnectionFail as e:
-        failures.append(str(e))
         report = HealthReport(status=HealthStatus.WARNING, description="Active Tests not performed",
                               details=f"Active diagnostics not performed.\n {e}")
         return report
     except dcgm_structs.DCGMError as e:
-        failures.append(str(e))
+        isHealthy = False
+        custom_fields['error_count'] += 1
+        custom_fields.setdefault('overall', _diag_entry())
+        custom_fields['overall']['errors'].append(str(e))
 
-    test_types = set()
-    if response.numErrors > 0:
+    if response and response.numErrors > 0:
         isHealthy = False
         for errIdx in range(response.numErrors):
             curErr = response.errors[errIdx]
             error_msg = curErr.msg
-            if curErr.testId == dcgm_structs.DCGM_DIAG_RESPONSE_SYSTEM_ERROR:
-                testName = "System"
-                failures.append(f"System Error: {error_msg}")
-                test_types.add(testName)
-            elif curErr.entity.entityGroupId == dcgm_fields.DCGM_FE_GPU:
-                testName = response.tests[curErr.testId].name
-                gpuId = curErr.entity.entityId
-                failures.append(f"GPU: {gpuId}, Test name: {testName}, Error: {error_msg}")
-                test_types.add(testName)
+            error_code = curErr.code
+            if curErr.entity.entityGroupId == dcgm_fields.DCGM_FE_GPU:
+                entity_id = f"GPU_{curErr.entity.entityId}"
             else:
-                failures.append(f"Error: {error_msg}")
-    if response.numInfo > 0:
-        for i in range(response.numInfo):
-            info = response.info[i]
-            testName = response.tests[info.testId].name
-            info_msgs.append(f"Test: {testName}, Info: {info.msg}")
-
+                entity_id = "overall"
+            custom_fields.setdefault(entity_id, _diag_entry())
+            if error_code in Wrap.DIAG_ERRORS:
+                custom_fields[entity_id]['errors'].append(error_msg)
+                custom_fields['error_count'] += 1
+                report.escalate(HealthStatus.ERROR)
+            elif error_code in Wrap.DIAG_WARNINGS:
+                note = Wrap.DIAG_WARNINGS[error_code]
+                custom_fields[entity_id]['warnings'].append({"msg": error_msg, "note": note})
+                report.escalate(HealthStatus.WARNING)
+            elif error_code in Wrap.DIAG_IGNORE:
+                continue
+            else:
+                custom_fields[entity_id]['suppressed'].append({"msg": error_msg, "note": Wrap.DIAG_SUPPRESSED_NOTE})
     if not isHealthy:
-        custom_fields['failures'] = test_types
-        custom_fields['error_count'] = len(failures)
-        custom_fields['info'] = info_msgs
-        report.status = HealthStatus.ERROR
-        report.details = "\n".join(failures)
-        if test_types:
-            report.description = f"DCGM Epilog failures in {', '.join(test_types)}"
-        else:
-            report.description = "DCGM Epilog failures detected"
+        #report.details = "\n".join(failures)
+        report.description = "Active Diagnostic test failures"
         report.message = "GPU Epilog Errors"
         report.custom_fields = custom_fields
 
