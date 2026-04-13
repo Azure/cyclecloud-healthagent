@@ -14,7 +14,7 @@ def main():
     print(f"Copied defaults.yaml to {defaults_dst}")
 
     # Copy example scripts
-    for fname in ["health.sh.example", "epilog.sh.example"]:
+    for fname in ["health.sh.example", "epilog.sh.example", "prolog.sh.example"]:
         src = os.path.join(os.path.dirname(__file__), "etc", fname)
         dst = os.path.join(etc_dir, fname)
         shutil.copy2(src, dst)

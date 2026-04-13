@@ -66,15 +66,14 @@ class DiagPhase(BaseModel):
     params: str = ""
 
 
-class DiagnosticsConfig(BaseModel):
+class GpuDiagnosticCheckConfig(BaseModel):
     prolog: DiagPhase = DiagPhase()
     epilog: DiagPhase = DiagPhase(tests="medium")
 
 
 class GpuConfig(ModuleConfig):
-    max_keep_samples: int = 300
     xid: XidConfig = XidConfig()
-    diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    gpudiagnosticcheck: GpuDiagnosticCheckConfig = GpuDiagnosticCheckConfig()
     field_watches: dict[str, ThresholdCheck] = {}
 
 
