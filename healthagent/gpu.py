@@ -8,6 +8,7 @@ from healthagent import epilog,status,healthcheck,prolog
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
+from healthagent.util import evaluate
 from healthagent.bindings import *
 
 log = logging.getLogger('healthagent')
@@ -75,8 +76,8 @@ class GpuHealthChecks(HealthModule):
         self.watch_fields = Wrap.get_fields()
         self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=self.watch_fields)
         # UpdateFreq is in microseconds. So we are updating every 1 second.
-        # maxKeepSamples=60 bounds memory. We read the latest value each cycle.
-        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=0, maxKeepSamples=60)
+        # maxKeepSamples=300 bounds memory. We read the latest value each cycle.
+        self.dcgmGroup.samples.WatchFields(fieldGroup=self.field_group, updateFreq=1000000, maxKeepAge=0, maxKeepSamples=300)
         ## Add the health watches
         self.dcgmGroup.health.Set(Wrap.get_health_mask())
 
@@ -142,6 +143,85 @@ class GpuHealthChecks(HealthModule):
     def _gpu_entry():
         return {"errors": [], "warnings": [], "xid": []}
 
+    def track_fieldsv2(self):
+        """
+        Generic field watch evaluation driven by Wrap.default_field_watches.
+        Reads DCGM field values and evaluates each watch against its thresholds.
+        XIDs are handled separately — not part of field watches.
+        """
+        custom_fields = {'error_count': 0, 'category': set()}
+        try:
+            response = self.dcgmGroup.samples.GetLatest_v2(self.field_group)
+            gpu_values = response.values.get(dcgm_fields.DCGM_FE_GPU, {})
+            for gpu in gpu_values:
+                gpu_id = f'GPU_{gpu}'
+                custom_fields.setdefault(gpu_id, self._gpu_entry())
+
+                for watch in Wrap.default_field_watches:
+                    samples = gpu_values[gpu].get(watch["field_id"])
+                    if not samples or samples[0].isBlank:
+                        continue
+
+                    newest, oldest = samples[0], samples[-1]
+                    severity = None
+                    threshold_used = None
+                    evaluated = None
+                    for level in ("error", "warning"):
+                        thresh = watch.get(level)
+                        if thresh is None:
+                            continue
+                        triggered, evaluated = evaluate(
+                            watch["eval"], newest.value, thresh,
+                            prev_value=oldest.value,
+                            prev_time=oldest.ts,
+                            current_time=newest.ts,
+                            window=watch.get("window", 60),
+                        )
+                        if triggered:
+                            severity = level
+                            threshold_used = thresh
+                            break
+
+                    if severity is None:
+                        continue
+
+                    msg = watch["message"].format(gpu=gpu, value=evaluated, threshold=threshold_used)
+                    custom_fields[gpu_id]["errors" if severity == "error" else "warnings"].append(msg)
+                    if severity == "error":
+                        custom_fields['error_count'] += 1
+                    custom_fields['category'].add(watch["category"])
+
+                # XID - read latest, deduplicate by xid number per GPU, keep earliest timestamp
+                xid_samples = gpu_values[gpu].get(Wrap.fields.XID_ERRORS, [])
+                if gpu_id not in self.xid_history:
+                    self.xid_history[gpu_id] = {}
+                for sample in xid_samples:
+                    if not sample.isBlank:
+                        xid_num = sample.value
+                        ts_utc = datetime.fromtimestamp(sample.ts / 1_000_000, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S UTC")
+                        if xid_num not in self.xid_history[gpu_id] or ts_utc < self.xid_history[gpu_id][xid_num]["timestamp"]:
+                            self.xid_history[gpu_id][xid_num] = {"xid": xid_num, "timestamp": ts_utc}
+
+            # Populate report with full XID history
+            for gpu_id, xids in self.xid_history.items():
+                custom_fields.setdefault(gpu_id, self._gpu_entry())
+                for entry in xids.values():
+                    xid_num = entry["xid"]
+                    if xid_num in self.XID_IGNORE:
+                        severity = "ignore"
+                    elif xid_num in self.XID_WARNING:
+                        severity = "warning"
+                    else:
+                        severity = "error"
+                        custom_fields['error_count'] += 1
+                    custom_fields[gpu_id]['xid'].append({**entry, "severity": severity})
+                if xids:
+                    custom_fields['category'].add("XID")
+
+            return custom_fields
+        except Exception as e:
+            log.exception(e)
+            return custom_fields
     def track_fields(self):
 
         """
@@ -162,49 +242,61 @@ class GpuHealthChecks(HealthModule):
                 # Handle Thermal
                 curr_temp = gpu_values[gpu][Wrap.fields.GPUTEMP][0].value
                 slowdown_temp = gpu_values[gpu][Wrap.fields.GPUTEMP_SLOWDOWN][0].value
-                if curr_temp >= (0.95*slowdown_temp):
+                triggered, _ = evaluate("ge", curr_temp, 0.95 * slowdown_temp)
+                if triggered:
                     msg = f"GPU temperature reached very close to the slowdown limit gpu: {gpu} Curr temp: {curr_temp}, slowdown limit: {slowdown_temp}"
                     custom_fields[gpu_id]["errors"].append(msg)
                     custom_fields['error_count'] += 1
                     custom_fields['category'].add("Thermal")
                 # Clocks
                 clock_reason = gpu_values[gpu][Wrap.fields.CLOCK_REASON][0].value
-                throttle_reasons = Wrap.get_throttle_reasons(clock_reason)
-                if throttle_reasons:
+                THROTTLE_MASK = (dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_SLOWDOWN
+                                 | dcgm_fields.DCGM_CLOCKS_EVENT_REASON_SW_THERMAL
+                                 | dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_THERMAL
+                                 | dcgm_fields.DCGM_CLOCKS_EVENT_REASON_HW_POWER_BRAKE)
+                triggered, _ = evaluate("bitmask", clock_reason, THROTTLE_MASK)
+                if triggered:
+                    throttle_reasons = Wrap.get_throttle_reasons(clock_reason)
                     custom_fields[gpu_id]["errors"].append(throttle_reasons)
                     custom_fields['error_count'] += 1
                     custom_fields['category'].add("Clocks")
                 # Fabric errors
                 fabric_status = gpu_values[gpu][Wrap.fields.FABRIC_STATUS][0].value
-                if fabric_status == dcgm_structs.DcgmFMStatusFailure:
+                triggered, _ = evaluate("eq", fabric_status, dcgm_structs.DcgmFMStatusFailure)
+                if triggered:
                     fabric_error = gpu_values[gpu][Wrap.fields.FABRIC_ERROR][0].value
                     msg = f"Fabric Manager finished training but failed, error code: {fabric_error}"
                     custom_fields[gpu_id]["errors"].append(msg)
                     custom_fields['error_count'] += 1
                     custom_fields['category'].add("FabricManager")
-                elif fabric_status == dcgm_structs.DcgmFMStatusInProgress:
-                    fabric_error = gpu_values[gpu][Wrap.fields.FABRIC_ERROR][0].value
-                    msg = f"Fabric Manager not running, training in progress, error code: {fabric_error}"
-                    custom_fields[gpu_id]["errors"].append(msg)
-                    custom_fields['error_count'] += 1
-                    custom_fields['category'].add("FabricManager")
+                else:
+                    triggered, _ = evaluate("eq", fabric_status, dcgm_structs.DcgmFMStatusInProgress)
+                    if triggered:
+                        fabric_error = gpu_values[gpu][Wrap.fields.FABRIC_ERROR][0].value
+                        msg = f"Fabric Manager not running, training in progress, error code: {fabric_error}"
+                        custom_fields[gpu_id]["errors"].append(msg)
+                        custom_fields['error_count'] += 1
+                        custom_fields['category'].add("FabricManager")
                 # Persistence mode
                 persistence_mode = gpu_values[gpu][Wrap.fields.PERSISTENCE_MODE][0].value
-                if persistence_mode != 1:
+                triggered, _ = evaluate("ne", persistence_mode, 1)
+                if triggered:
                     msg = f"Persistence Mode not set for GPU: {gpu}, Restart nvidia-persistenced or Reboot the system."
                     custom_fields[gpu_id]["errors"].append(msg)
                     custom_fields['error_count'] += 1
                     custom_fields['category'].add("System")
                 # Row Remap failures
                 row_remap_failure = gpu_values[gpu][Wrap.fields.ROW_REMAP_FAIL][0].value
-                if row_remap_failure:
+                triggered, _ = evaluate("ne", row_remap_failure, 0)
+                if triggered:
                     msg = f"GPU {gpu}: {dcgm_errors.DCGM_FR_ROW_REMAP_FAILURE_MSG} {dcgm_errors.DCGM_FR_ROW_REMAP_FAILURE_NEXT}"
                     custom_fields[gpu_id]["errors"].append(msg)
                     custom_fields['error_count'] += 1
                     custom_fields['category'].add("Memory")
                 # DBE error
                 dbe_error = gpu_values[gpu][Wrap.fields.DBE_ERRORS][0].value
-                if dbe_error > 0:
+                triggered, _ = evaluate("gt", dbe_error, 0)
+                if triggered:
                     msg = f"{dcgm_errors.DCGM_FR_VOLATILE_DBE_DETECTED_MSG % (dbe_error, gpu)} {dcgm_errors.DCGM_FR_VOLATILE_DBE_DETECTED_NEXT}"
                     custom_fields[gpu_id]["errors"].append(msg)
                     custom_fields['error_count'] += 1
