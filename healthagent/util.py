@@ -10,9 +10,9 @@ def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
     For all others, evaluated_value is the input value.
 
     Args:
-        eval_type: Comparison type (gt, lt, ge, le, eq, ne, bitmask, delta_gt)
+        eval_type: Comparison type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt)
         value: Current value to evaluate
-        threshold: Threshold to compare against
+        threshold: Threshold to compare against (list for 'in' eval type)
         prev_value: Previous sample value (delta_gt only)
         prev_time: Previous sample timestamp in monotonic seconds (delta_gt only)
         current_time: Current sample timestamp in monotonic seconds (delta_gt only)
@@ -32,6 +32,8 @@ def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
         return value == threshold, value
     elif eval_type == "ne":
         return value != threshold, value
+    elif eval_type == "in":
+        return value in threshold, value
     elif eval_type == "bitmask":
         matched = operator.index(value) & operator.index(threshold)
         return matched != 0, matched

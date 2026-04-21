@@ -211,6 +211,37 @@ class TestEvaluateDeltaGt:
         assert rate == 50.0
 
 
+class TestEvaluateIn:
+
+    def test_in_match(self):
+        triggered, val = evaluate("in", 4, [4, 1])
+        assert triggered is True
+        assert val == 4
+
+    def test_in_match_second(self):
+        triggered, val = evaluate("in", 1, [4, 1])
+        assert triggered is True
+        assert val == 1
+
+    def test_in_no_match(self):
+        triggered, val = evaluate("in", 3, [4, 1])
+        assert triggered is False
+        assert val == 3
+
+    def test_in_single_element(self):
+        triggered, val = evaluate("in", 2, [2])
+        assert triggered is True
+
+    def test_in_empty_list(self):
+        triggered, val = evaluate("in", 4, [])
+        assert triggered is False
+        assert val == 4
+
+    def test_in_returns_input_value(self):
+        _, val = evaluate("in", 42, [1, 2, 3])
+        assert val == 42
+
+
 class TestEvaluateUnknown:
 
     def test_unknown_eval_type(self):
