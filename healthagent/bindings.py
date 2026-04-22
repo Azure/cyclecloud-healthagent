@@ -75,37 +75,27 @@ def _resolve_error_codes_with_notes(*pairs):
             codes[code] = f"Healthagent Note: {note}"
     return codes
 
-# Single source of truth for DCGM field definitions.
+# System/reference fields — needed by non-watch code (XID handling, gpu_count_check,
+# display config, detail lookups). Not user-configurable thresholds.
 # (alias, dcgm_fields attribute name)
-# Some fields are event driven (by NVML) and others are polled.
-_FIELD_DEFS = [
-    # Dev count
-    ("DEVCNT", "DCGM_FI_DEV_CNT"),
-    # Thermal & Power
-    ("GPUTEMP",          "DCGM_FI_DEV_GPU_TEMP"),
+_SYSTEM_FIELDS = [
+    # Dev count — used by gpu_count_check
+    ("DEVCNT",           "DCGM_FI_DEV_CNT"),
+    # Reference temps — used by __display_gpu_config / telemetry
     ("GPUTEMP_SLOWDOWN", "DCGM_FI_DEV_SLOWDOWN_TEMP"),
     ("GPUTEMP_SHUTDOWN",  "DCGM_FI_DEV_SHUTDOWN_TEMP"),
-    ("GPUPOWER",          "DCGM_FI_DEV_POWER_USAGE"),
-    # Clocks
-    ("CLOCK_REASON",      "DCGM_FI_DEV_CLOCK_THROTTLE_REASONS"),
-    # Fabric
-    ("FABRIC_STATUS",     "DCGM_FI_DEV_FABRIC_MANAGER_STATUS"),
+    # Fabric error code — detail field read on fabric status trigger
     ("FABRIC_ERROR",      "DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE"),
-    # Driver
-    ("PERSISTENCE_MODE",  "DCGM_FI_DEV_PERSISTENCE_MODE"),
-    # Errors
+    # XID — event-driven, handled separately via XID_WARNING/XID_IGNORE
     ("XID_ERRORS",        "DCGM_FI_DEV_XID_ERRORS"),
-    ("DBE_ERRORS",        "DCGM_FI_DEV_ECC_DBE_VOL_TOTAL"),
-    ("RECOVERY_ACTION",   "DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION"),
-    ("ROW_REMAP_FAIL",    "DCGM_FI_DEV_ROW_REMAP_FAILURE"),
 ]
 
 class _Fields:
-    """Namespace for DCGM field IDs, populated from _FIELD_DEFS.
+    """Namespace for DCGM field IDs, populated from _SYSTEM_FIELDS.
     Missing fields on older DCGM versions are set to None."""
     avail_field_ids = []
 
-for _alias, _dcgm_name in _FIELD_DEFS:
+for _alias, _dcgm_name in _SYSTEM_FIELDS:
     _field_id = getattr(dcgm_fields, _dcgm_name, None)
     setattr(_Fields, _alias, _field_id)
     if _field_id is not None:
@@ -123,7 +113,6 @@ for _alias, _dcgm_name in _FIELD_DEFS:
 _FIELD_WATCHES = [
     {"field": "DCGM_FI_DEV_GPU_TEMP",               "eval": "gt",       "warning": 83, "error": 90, "category": "Thermal",        "message": "GPU {gpu} temperature {value}\u00b0C exceeds {threshold}\u00b0C"},
     {"field": "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",   "eval": "bitmask",                 "error": 0xE8, "category": "Clocks",       "message": "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"},
-    {"field": "DCGM_FI_DEV_FABRIC_MANAGER_STATUS",   "eval": "in",                     "error": [4, 1], "category": "FabricManager", "message": "GPU {gpu} Fabric Manager unhealthy (status: {value})"},
     {"field": "DCGM_FI_DEV_PERSISTENCE_MODE",        "eval": "ne",                     "error": 1,    "category": "System",        "message": "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."},
     {"field": "DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION", "eval": "in",  "warning": [2],    "error": [3, 4], "category": "System",      "message": "GPU {gpu} recovery action requested (action: {value})"},
     {"field": "DCGM_FI_DEV_ROW_REMAP_FAILURE",       "eval": "ne",                     "error": 0,    "category": "Memory",        "message": "GPU {gpu} row remap failure detected"},
@@ -157,6 +146,19 @@ class Wrap:
     fields = _Fields
     default_field_watches = resolve_field_watches(_FIELD_WATCHES)
 
+    ENTITY_GROUP_NAMES = {
+        dcgm_fields.DCGM_FE_NONE: "None",
+        dcgm_fields.DCGM_FE_GPU: "GPU",
+        dcgm_fields.DCGM_FE_VGPU: "vGPU",
+        dcgm_fields.DCGM_FE_SWITCH: "Switch",
+        dcgm_fields.DCGM_FE_GPU_I: "GPU_I",
+        dcgm_fields.DCGM_FE_GPU_CI: "GPU_CI",
+        dcgm_fields.DCGM_FE_LINK: "Link",
+        dcgm_fields.DCGM_FE_CPU: "CPU",
+        dcgm_fields.DCGM_FE_CPU_CORE: "CPU_Core",
+        dcgm_fields.DCGM_FE_CONNECTX: "ConnectX",
+    }
+
     @classmethod
     def get_fields(cls):
         return list(_Fields.avail_field_ids)
@@ -165,9 +167,9 @@ class Wrap:
         "DCGM_FR_NVLINK_ERROR_CRITICAL",
         "DCGM_FR_NVLINK_DOWN",
         "DCGM_FR_NVSWITCH_FATAL_ERROR",
-        "DCGM_FR_ROW_REMAP_FAILURE",
         "DCGM_FR_FAULTY_MEMORY",
         "DCGM_FR_FIELD_VIOLATION",
+        "DCGM_FR_FABRIC_PROBE_STATE"
     )
 
     HEALTH_WARNINGS = _resolve_error_codes(
@@ -222,7 +224,7 @@ class Wrap:
         "DCGM_FR_XID_ERROR"
     )
 
-    DIAG_SUPPRESSED_NOTE = "Healthagent Note: Low confidence. Suppressed to avoid false positives."
+    DIAG_SUPPRESSED_NOTE = "Healthagent Note: Low confidence. Suppressed to avoid false positives or duplicated errors that do not represent diagnostic test failures."
 
     @classmethod
     def count_os_gpu_devices(cls) -> int:
@@ -306,7 +308,7 @@ class Wrap:
         return gpu_count
 
     @classmethod
-    def get_throttle_reasons(cls, clock_reason):
+    def get_throttle_reasons(cls, clock_reason, field_values=None):
         reasons = []
 
         # This is an indicator of:
