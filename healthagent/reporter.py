@@ -1,6 +1,6 @@
 import copy
 from enum import Enum
-from dataclasses import dataclass, asdict, is_dataclass, field, InitVar
+from dataclasses import dataclass, asdict, is_dataclass, field, fields, InitVar
 from datetime import datetime, timedelta, timezone
 from time import time
 from typing import Any, Dict
@@ -72,8 +72,8 @@ class HealthReport:
     message: str = None
     "One line description describing the details"
     description: str = None
-    "Detailed message"
-    details: str = None
+    "Detailed message — excluded from CLI output, only sent to CycleCloud UI"
+    details: str = field(default=None, metadata={"cli_exclude": True})
     "recommended actions"
     recommendations :str = None
     "Last time the report was updated"
@@ -118,12 +118,15 @@ class HealthReport:
         if new_status > self.status:
             self.status = new_status
 
-    def view(self) -> Dict[str, Any]:
+    def view(self, cli_exclude: bool = True) -> Dict[str, Any]:
         """
         View method shows the healthreport in its final form.
         aux_data is an InitVar and is excluded from asdict() automatically.
         Custom fields are module specific and are merged to top_level.
+        cli_exclude: when True, fields marked with metadata={"cli_exclude": True} are omitted.
         """
+        # Collect fields to exclude based on metadata
+        exclude = {f.name for f in fields(self) if f.metadata.get("cli_exclude")} if cli_exclude else set()
         # Convert the dataclass to a dictionary
         base_dict = make_json_safe(asdict(self))
         # Merge custom_fields into the top-level dictionary
@@ -133,7 +136,7 @@ class HealthReport:
         filtered_dict = {
             key: (value.value if isinstance(value, Enum) else value)
             for key, value in base_dict.items()
-            if value is not None
+            if value is not None and key not in exclude
         }
         return filtered_dict
 
@@ -178,7 +181,7 @@ class Reporter:
 
         response = {}
         for name, report in self.store.items():
-            response[name] = report.view()
+            response[name] = report.view(cli_exclude=True)
         return response
 
     async def clear_all_errors(self, delta: timedelta = None):
