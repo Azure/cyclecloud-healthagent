@@ -108,33 +108,39 @@ class SystemdMonitor(HealthModule):
             if active_state == "failed":
                 log.error(f"{service} Service unhealthy")
                 self.state[service] = active_state
-                await self._update_services()
+                await self.update_services()
             elif active_state == "active" and substate == "running":
                 if self.state.get(service) in ("failed", "inactive", None):
                     log.info(f"{service} Service Healthy")
                     self.state[service] = active_state
-                    await self._update_services()
+                    await self.update_services()
 
+
+    def _build_details(self, failed_services, custom_fields):
+        """Build a formatted details string from journal entries of failed services."""
+        DETAIL_SEPARATOR = "------"
+        details_parts = []
+        for svc in failed_services:
+            journal = custom_fields[svc].get('error', '')
+            details_parts.append(f"{DETAIL_SEPARATOR} {svc} {DETAIL_SEPARATOR}\n{journal}")
+        return "\n".join(details_parts)
 
     @healthcheck("SystemdServiceCheck", description="Track systemd service health")
-    async def _update_services(self):
+    async def update_services(self):
         """Build a single aggregated HealthReport from all tracked service states."""
         failed_services = [svc for svc, state in self.state.items() if state == "failed"]
         now = datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%S %Z")
-        DETAIL_SEPARATOR = "------"
         # Build per-service custom_fields
         custom_fields = {"error_count": len(failed_services)}
         for svc, state in self.state.items():
             svc_status = HealthStatus.ERROR if state == "failed" else HealthStatus.OK
             custom_fields[svc] = {"status": svc_status.value, "last_update": now}
+            if state == "failed":
+                custom_fields[svc]['error'] = self.get_journal_entries(service_name=svc)
 
         if failed_services:
             description = ", ".join(failed_services) + " unhealthy"
-            details_parts = []
-            for svc in failed_services:
-                journal = self.get_journal_entries(service_name=svc)
-                details_parts.append(f"{DETAIL_SEPARATOR} {svc} {DETAIL_SEPARATOR}\n{journal}")
-            details = "\n".join(details_parts)
+            details = self._build_details(failed_services, custom_fields)
             report = HealthReport(
                 status=HealthStatus.ERROR,
                 description=description,
@@ -147,7 +153,7 @@ class SystemdMonitor(HealthModule):
                 custom_fields=custom_fields,
             )
 
-        await self.reporter.update_report(name=self._update_services.report_name, report=report)
+        await self.reporter.update_report(name=self.update_services.report_name, report=report)
 
 
     def create_callback(self, unit: str = None, service_name: str = None):
