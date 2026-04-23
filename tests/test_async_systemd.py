@@ -104,9 +104,9 @@ async def test_no_report_on_transient_state():
     mon = FakeSystemdMonitor(reporter)
 
     await mon.set_current_state("slurmd.service", "activating", "start")
-    # Transient state should update self.state but NOT call _update_aggregated_report
+    # Transient state should NOT update self.state or call reporter.update_report
     reporter.update_report.assert_not_called()
-    assert mon.state["slurmd.service"] == "activating"
+    assert "slurmd.service" not in mon.state
 
 
 async def test_same_state_no_update():
@@ -134,7 +134,7 @@ async def test_report_name_matches_healthcheck_decorator():
     name_arg = reporter.update_report.call_args[1]["name"]
     assert name_arg == "SystemdServiceCheck"
     # Verify it matches the @healthcheck decorator
-    assert name_arg == mon._update_services.report_name
+    assert name_arg == mon.update_services.report_name
 
 
 async def test_partial_recovery_still_error():
