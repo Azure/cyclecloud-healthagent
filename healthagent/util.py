@@ -46,6 +46,6 @@ def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
         elapsed = current_time - prev_time
         if elapsed <= 0:
             return False, 0.0
-        rate = delta / elapsed * window
+        rate = (delta * window) / elapsed
         return rate > threshold, rate
     raise ValueError(f"Unknown eval_type: {eval_type!r}")
