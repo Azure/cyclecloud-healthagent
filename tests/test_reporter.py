@@ -195,6 +195,37 @@ def test_aux_data_defaults_to_none():
     assert report.aux_data is None
 
 
+def test_view_cli_excludes_marked_fields():
+    """view(cli_exclude=True) should omit fields marked with cli_exclude metadata."""
+    report = HealthReport(
+        status=HealthStatus.ERROR,
+        description="GPU failure",
+        details="long error trace here",
+    )
+    view_full = report.view()
+    assert "details" in view_full
+
+    view_cli = report.view(cli_exclude=True)
+    assert "details" not in view_cli
+    assert view_cli["status"] == "Error"
+    assert view_cli["description"] == "GPU failure"
+
+
+def test_summarize_excludes_details():
+    """summarize() should not include 'details' in its output."""
+    reporter = Reporter()
+    reporter.publish_cc = False
+    report = HealthReport(
+        status=HealthStatus.ERROR,
+        description="fail",
+        details="verbose error log",
+    )
+    reporter.store["test"] = report
+    summary = reporter.summarize()
+    assert "details" not in summary["test"]
+    assert summary["test"]["description"] == "fail"
+
+
 async def test_aux_data_persisted_on_dedup():
     """aux_data should be updated even when visible report fields are unchanged."""
     reporter = Reporter()
