@@ -55,6 +55,82 @@ def create_c_callback(func: callable, loop: asyncio.BaseEventLoop):
         loop.call_soon_threadsafe(asyncio.create_task, func(callbackResp))
     return c_callback
 
+def _resolve_error_codes(*names):
+    """Safely resolve DCGM_FR_* names to their integer codes, skipping any
+    that don't exist in the installed dcgm_errors module."""
+    codes = set()
+    for name in names:
+        code = getattr(dcgm_errors, name, None)
+        if code is not None:
+            codes.add(code)
+    return codes
+
+def _resolve_error_codes_with_notes(*pairs):
+    """Resolve (DCGM_FR_name, note) pairs to {int_code: note} dict,
+    skipping any that don't exist in the installed dcgm_errors module."""
+    codes = {}
+    for name, note in pairs:
+        code = getattr(dcgm_errors, name, None)
+        if code is not None:
+            codes[code] = f"Healthagent Note: {note}"
+    return codes
+
+# System/reference fields — needed by non-watch code (XID handling, gpu_count_check,
+# display config, detail lookups). Not user-configurable thresholds.
+# (alias, dcgm_fields attribute name)
+_SYSTEM_FIELDS = [
+    # Dev count — used by gpu_count_check
+    ("DEVCNT",           "DCGM_FI_DEV_CNT"),
+    # Reference temps — used by __display_gpu_config / telemetry
+    ("GPUTEMP_SLOWDOWN", "DCGM_FI_DEV_SLOWDOWN_TEMP"),
+    ("GPUTEMP_SHUTDOWN",  "DCGM_FI_DEV_SHUTDOWN_TEMP"),
+    # Fabric error code — detail field read on fabric status trigger
+    ("FABRIC_ERROR",      "DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE"),
+    # XID — event-driven, handled separately via XID_WARNING/XID_IGNORE
+    ("XID_ERRORS",        "DCGM_FI_DEV_XID_ERRORS"),
+]
+
+class _Fields:
+    """Namespace for DCGM field IDs, populated from _SYSTEM_FIELDS.
+    Missing fields on older DCGM versions are set to None."""
+    avail_field_ids = []
+
+for _alias, _dcgm_name in _SYSTEM_FIELDS:
+    _field_id = getattr(dcgm_fields, _dcgm_name, None)
+    setattr(_Fields, _alias, _field_id)
+    if _field_id is not None:
+        _Fields.avail_field_ids.append(_field_id)
+
+# Default field watches — built-in thresholds for health evaluation.
+# Same shape as future YAML config. Each entry is one watch:
+#   field:    DCGM field constant name (string)
+#   eval:     evaluation type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt)
+#   warning:  threshold for warning severity (number or list for 'in'; omit if not needed)
+#   error:    threshold for error severity (number or list for 'in'; omit if not needed)
+#   category: reporting category string
+#   message:  template with {gpu}, {value}, {threshold} placeholders
+#   window:   (optional) rate normalization window in seconds for delta_gt (default: 60, max: 300)
+_FIELD_WATCHES = [
+    {"field": "DCGM_FI_DEV_GPU_TEMP",               "eval": "gt",       "warning": 83, "error": 90, "category": "Thermal",        "message": "GPU {gpu} temperature {value}\u00b0C exceeds {threshold}\u00b0C"},
+    {"field": "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",   "eval": "bitmask",                 "error": 0xE8, "category": "Clocks",       "message": "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"},
+    {"field": "DCGM_FI_DEV_PERSISTENCE_MODE",        "eval": "ne",                     "error": 1,    "category": "System",        "message": "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."},
+    {"field": "DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION", "eval": "in",  "warning": [2],    "error": [3, 4], "category": "System",      "message": "GPU {gpu} recovery action requested (action: {value})"},
+    {"field": "DCGM_FI_DEV_ROW_REMAP_FAILURE",       "eval": "ne",                     "error": 0,    "category": "Memory",        "message": "GPU {gpu} row remap failure detected"},
+    {"field": "DCGM_FI_DEV_ECC_DBE_VOL_TOTAL",       "eval": "gt",                     "error": 0,    "category": "Memory",        "message": "GPU {gpu} volatile DBE errors detected: {value}"},
+    {"field": "DCGM_FI_DEV_RETIRED_SBE",             "eval": "gt",       "warning": 50, "error": 63, "category": "Memory",        "message": "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"},
+    {"field": "DCGM_FI_DEV_ECC_SBE_AGG_TOTAL",       "eval": "delta_gt", "warning": 100,              "category": "Memory",        "message": "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"},
+    {"field": "DCGM_FI_DEV_PCIE_REPLAY_COUNTER",     "eval": "delta_gt", "warning": 50, "error": 200, "category": "PCIe",         "message": "GPU {gpu} PCIe replay rate {value:.0f}/min exceeds {threshold}/min"},
+]
+
+def resolve_field_watches(watches):
+    """Resolve field name strings to DCGM field IDs.
+    Skips watches with unknown fields (forward-compatibility)."""
+    resolved = []
+    for watch in watches:
+        field_id = getattr(dcgm_fields, watch["field"], None)
+        if field_id is not None:
+            resolved.append({**watch, "field_id": field_id})
+    return resolved
 
 class Wrap:
 
@@ -67,16 +143,88 @@ class Wrap:
     class DcgmGpuNotFound(Exception):
         pass
 
-    class fields():
+    fields = _Fields
+    default_field_watches = resolve_field_watches(_FIELD_WATCHES)
 
-        GPUTEMP = dcgm_fields.DCGM_FI_DEV_GPU_TEMP
-        GPUTEMP_SLOWDOWN = dcgm_fields.DCGM_FI_DEV_SLOWDOWN_TEMP
-        GPUTEMP_SHUTDOWN = dcgm_fields.DCGM_FI_DEV_SHUTDOWN_TEMP
-        CLOCK_REASON = dcgm_fields.DCGM_FI_DEV_CLOCK_THROTTLE_REASONS
-        FABRIC_STATUS = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_STATUS
-        FABRIC_ERROR = dcgm_fields.DCGM_FI_DEV_FABRIC_MANAGER_ERROR_CODE
-        GPUPOWER = dcgm_fields.DCGM_FI_DEV_POWER_USAGE
-        PERSISTENCE_MODE = dcgm_fields.DCGM_FI_DEV_PERSISTENCE_MODE
+    ENTITY_GROUP_NAMES = {
+        dcgm_fields.DCGM_FE_NONE: "None",
+        dcgm_fields.DCGM_FE_GPU: "GPU",
+        dcgm_fields.DCGM_FE_VGPU: "vGPU",
+        dcgm_fields.DCGM_FE_SWITCH: "Switch",
+        dcgm_fields.DCGM_FE_GPU_I: "GPU_I",
+        dcgm_fields.DCGM_FE_GPU_CI: "GPU_CI",
+        dcgm_fields.DCGM_FE_LINK: "Link",
+        dcgm_fields.DCGM_FE_CPU: "CPU",
+        dcgm_fields.DCGM_FE_CPU_CORE: "CPU_Core",
+        dcgm_fields.DCGM_FE_CONNECTX: "ConnectX",
+    }
+
+    @classmethod
+    def get_fields(cls):
+        return list(_Fields.avail_field_ids)
+
+    HEALTH_ERRORS = _resolve_error_codes(
+        "DCGM_FR_NVLINK_ERROR_CRITICAL",
+        "DCGM_FR_NVLINK_DOWN",
+        "DCGM_FR_NVSWITCH_FATAL_ERROR",
+        "DCGM_FR_FAULTY_MEMORY",
+        "DCGM_FR_FIELD_VIOLATION",
+        "DCGM_FR_FABRIC_PROBE_STATE"
+    )
+
+    HEALTH_WARNINGS = _resolve_error_codes(
+        "DCGM_FR_PCI_REPLAY_RATE",
+        "DCGM_FR_CORRUPT_INFOROM",
+        "DCGM_FR_NVSWITCH_NON_FATAL_ERROR",
+        "DCGM_FR_NVLINK_SYMBOL_BER_THRESHOLD",
+        "DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD",
+    )
+
+    DIAG_ERRORS = _resolve_error_codes(
+        "DCGM_FR_CUDA_DBE",
+        "DCGM_FR_MEMORY_MISMATCH",
+        "DCGM_FR_L1TAG_MISCOMPARE",
+        "DCGM_FR_BROKEN_P2P_MEMORY_DEVICE",
+        "DCGM_FR_BROKEN_P2P_WRITER_DEVICE",
+        "DCGM_FR_BROKEN_P2P_NVLINK_WRITER_DEVICE",
+        "DCGM_FR_BROKEN_P2P_NVLINK_MEMORY_DEVICE",
+        "DCGM_FR_BROKEN_P2P_PCIE_MEMORY_DEVICE",
+        "DCGM_FR_BROKEN_P2P_PCIE_WRITER_DEVICE",
+        "DCGM_FR_CORRUPT_INFOROM",
+        "DCGM_FR_CANNOT_OPEN_LIB",
+        "DCGM_FR_DENYLISTED_DRIVER",
+        "DCGM_FR_BAD_CUDA_ENV",
+        "DCGM_FR_FAULTY_MEMORY",
+        "DCGM_FR_GPU_EXPECTED_NVLINKS_UP",
+        "DCGM_FR_NVSWITCH_EXPECTED_NVLINKS_UP",
+        "DCGM_FR_FABRIC_MANAGER_TRAINING_ERROR",
+        "DCGM_FR_UNCORRECTABLE_ROW_REMAP",
+        "DCGM_FR_PENDING_ROW_REMAP",
+        "DCGM_FR_PENDING_PAGE_RETIREMENTS",
+        "DCGM_FR_DBE_PENDING_PAGE_RETIREMENTS"
+    )
+
+    DIAG_WARNINGS = _resolve_error_codes_with_notes(
+        ("DCGM_FR_FIELD_QUERY", "Transient DCGM field read failure, not indicative of fault"),
+        ("DCGM_FR_RETIRED_PAGES_LIMIT", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_PCIE_H_REPLAY_VIOLATION", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_FIELD_THRESHOLD", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_FIELD_THRESHOLD_TS", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_NVLINK_SYMBOL_BER_THRESHOLD", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_CONCURRENT_GPUS", "Not indicative of failure"),
+        ("DCGM_FR_DCGM_API", "Second order effect - Not root cause"),
+        ("DCGM_FR_INTERNAL", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_HIGH_LATENCY", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_LOW_BANDWIDTH", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+        ("DCGM_FR_SRAM_THRESHOLD", "Disputed or undefined Threshold. Use field watches to set custom thresholds"),
+    )
+
+    DIAG_IGNORE = _resolve_error_codes(
+        "DCGM_FR_XID_ERROR"
+    )
+
+    DIAG_SUPPRESSED_NOTE = "Healthagent Note: Low confidence. Suppressed to avoid false positives or duplicated errors that do not represent diagnostic test failures."
 
     @classmethod
     def count_os_gpu_devices(cls) -> int:
@@ -160,7 +308,7 @@ class Wrap:
         return gpu_count
 
     @classmethod
-    def get_throttle_reasons(cls, clock_reason):
+    def get_throttle_reasons(cls, clock_reason, field_values=None):
         reasons = []
 
         # This is an indicator of:
@@ -193,19 +341,6 @@ class Wrap:
             reasons.append("Hardware Power Brake in effect. Clocks may be reduced by a factor of 2 or more due to external power brake assertion being triggered.")
 
         return reasons
-
-    @classmethod
-    def get_fields(cls):
-        return [
-            Wrap.fields.CLOCK_REASON,
-            Wrap.fields.FABRIC_ERROR,
-            Wrap.fields.FABRIC_STATUS,
-            Wrap.fields.GPUPOWER,
-            Wrap.fields.GPUTEMP,
-            Wrap.fields.GPUTEMP_SHUTDOWN,
-            Wrap.fields.GPUTEMP_SLOWDOWN,
-            Wrap.fields.PERSISTENCE_MODE
-        ]
 
     @classmethod
     def convert_system_enum_to_system_name(cls, system):
@@ -302,7 +437,6 @@ class Wrap:
         else:
             raise ValueError("Unknown condition")
 
-    # Returns true if the error here should be ignored
     @classmethod
     def should_ignore_error(cls, diagException):
         if diagException.info:
@@ -362,7 +496,7 @@ class Wrap:
             del(handle)
 
     @classmethod
-    def set_policy(cls, mpe):
+    def set_policy(cls):
         """
         Setup policy violations and thresholds.
         Add required fields for tracking.
@@ -371,45 +505,13 @@ class Wrap:
         policy = dcgm_structs.c_dcgmPolicy_v1()
         policy.version = dcgm_structs.dcgmPolicy_version1
 
-        # Double Bit Errors
-        policy.condition = dcgm_structs.DCGM_POLICY_COND_DBE
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_DBE].tag = 0
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_DBE].val.boolean = True
-
-        # PCIe replay errors
-        policy.condition |= dcgm_structs.DCGM_POLICY_COND_PCI
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].tag = 0
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_PCI].val.llval = 1
-
-        # Nvlink Errors
-        policy.condition |= dcgm_structs.DCGM_POLICY_COND_NVLINK
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].tag = 0
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_NVLINK].val.boolean = True
-
         # XID errors
         policy.condition |= dcgm_structs.DCGM_POLICY_COND_XID
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].tag = 0
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].val.boolean = True
+        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].tag = 1
+        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_XID].val.llval = 1
 
-
-        # # Thermal errors
-        # policy.condition |= dcgm_structs.DCGM_POLICY_COND_THERMAL
-        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].tag = 1
-        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_THERMAL].val.llval = temperature
-
-        # Max pages retired errors
-        policy.condition |= dcgm_structs.DCGM_POLICY_COND_MAX_PAGES_RETIRED
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].tag = 1
-        policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_MAX_PAGES_RETIRED].val.llval = mpe
-
-
-        # # Power draw HW errors
-        # policy.condition |= dcgm_structs.DCGM_POLICY_COND_POWER
-        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].tag = 1
-        # policy.parms[dcgm_structs.DCGM_POLICY_COND_IDX_POWER].val.llval = power
 
         return policy
-
     @classmethod
     def get_health_mask(cls):
         exclude_mask = dcgm_structs.DCGM_HEALTH_WATCH_THERMAL | dcgm_structs.DCGM_HEALTH_WATCH_POWER
