@@ -65,6 +65,7 @@ FI_RECOVERY_ACTION           = 1523
 FI_ECC_SBE_AGG_TOTAL         = 312
 FI_PCIE_REPLAY_COUNTER       = 202
 FI_FABRIC_HEALTH_MASK        = 174
+FI_XID_ERRORS                = 230
 
 
 # ── Test functions ─────────────────────────────────────────────
@@ -145,6 +146,13 @@ def test_sbe_rate(gpu_id, duration):
     inject_loop(gpu_id, FI_ECC_SBE_AGG_TOTAL, 99999, duration, "SBE_AGG_TOTAL")
 
 
+def test_xid(gpu_id, duration):
+    """Inject XID errors — one error XID (48) and one warning XID (63)."""
+    print(f"\n=== GPU {gpu_id}: XID errors (warning=[43,63,13,31,66,94,154], else error) ===")
+    inject_loop(gpu_id, FI_XID_ERRORS, 48, duration, "XID 48 (error)")
+    inject_loop(gpu_id, FI_XID_ERRORS, 63, duration, "XID 63 (warning)")
+
+
 def test_clear(gpu_id, duration):
     """Inject healthy values to clear previous injections."""
     print(f"\n=== GPU {gpu_id}: Clearing — injecting healthy values ===")
@@ -160,6 +168,7 @@ def test_clear(gpu_id, duration):
         (FI_RECOVERY_ACTION, 0, "RECOVERY_ACTION"),
         (FI_ECC_SBE_AGG_TOTAL, 0, "SBE_AGG_TOTAL"),
         (FI_PCIE_REPLAY_COUNTER, 0, "PCIE_REPLAY_COUNTER"),
+        (FI_XID_ERRORS, 0, "XID_ERRORS"),
     ]
     for field_id, value, name in clears:
         ok = inject(gpu_id, field_id, value)
@@ -180,6 +189,7 @@ TESTS = {
     "fabric_health": test_fabric_health,
     "recovery": test_recovery_action,
     "sberate":  test_sbe_rate,
+    "xid":      test_xid,
     "clear":    test_clear,
 }
 
