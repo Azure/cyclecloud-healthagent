@@ -498,7 +498,69 @@ def test_status_no_pruning_when_all_keys_valid():
 
     assert len(reporter.store) == 2
     assert "ActiveGPUHealthChecks" in result
-    assert "NvlinkCheck" in result
+
+
+# --- Tests for _phase injection ---
+
+class FakePhaseAwareModule(HealthModule):
+    """Module with a handler that accepts _phase to apply phase-specific defaults."""
+
+    DEFAULTS = {
+        "prolog": {"level": "1"},
+        "epilog": {"level": "2"},
+    }
+
+    @healthcheck("PhaseCheck", args=["level"])
+    @prolog
+    @epilog
+    async def phase_check(self, level: str = '', _phase: str = None):
+        defaults = self.DEFAULTS.get(_phase, {})
+        level = level or defaults.get("level", "")
+        return {"PhaseCheck": {"level": level, "phase": _phase}}
+
+
+class FakePhaseUnawareModule(HealthModule):
+    """Module with a handler that does NOT accept _phase — should still work."""
+
+    @healthcheck("SimpleCheck")
+    @epilog
+    async def simple_check(self):
+        return {"SimpleCheck": {"status": "OK"}}
+
+
+async def test_phase_injected_for_epilog():
+    """Handler with _phase param receives 'epilog' when run via epilog."""
+    reporter = Reporter()
+    mod = FakePhaseAwareModule(reporter=reporter)
+    result = await mod.execute("epilog", checks={"PhaseCheck": {}})
+    assert result["PhaseCheck"]["phase"] == "epilog"
+    assert result["PhaseCheck"]["level"] == "2"
+
+
+async def test_phase_injected_for_prolog():
+    """Handler with _phase param receives 'prolog' when run via prolog."""
+    reporter = Reporter()
+    mod = FakePhaseAwareModule(reporter=reporter)
+    result = await mod.execute("prolog", checks={"PhaseCheck": {}})
+    assert result["PhaseCheck"]["phase"] == "prolog"
+    assert result["PhaseCheck"]["level"] == "1"
+
+
+async def test_explicit_kwarg_overrides_phase_default():
+    """Explicitly provided kwargs should override phase defaults."""
+    reporter = Reporter()
+    mod = FakePhaseAwareModule(reporter=reporter)
+    result = await mod.execute("epilog", checks={"PhaseCheck": {"level": "3"}})
+    assert result["PhaseCheck"]["level"] == "3"
+    assert result["PhaseCheck"]["phase"] == "epilog"
+
+
+async def test_phase_not_injected_when_not_in_signature():
+    """Handlers without _phase in signature should not receive it."""
+    reporter = Reporter()
+    mod = FakePhaseUnawareModule(reporter=reporter)
+    result = await mod.execute("epilog")
+    assert result["SimpleCheck"]["status"] == "OK"
 
 
 def test_status_prunes_with_empty_registry():
