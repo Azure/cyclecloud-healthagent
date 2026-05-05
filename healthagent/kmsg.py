@@ -12,9 +12,9 @@ log = logging.getLogger(__name__)
 
 class KmsgReader(HealthModule):
 
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, config: dict | None = None):
 
-        super().__init__(reporter)
+        super().__init__(reporter, config)
         try:
             self.fd = os.open("/dev/kmsg", os.O_RDONLY | os.O_NONBLOCK)
         except Exception as e:

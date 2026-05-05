@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "healthagent"
 version = "2.0.0"
-dependencies = ["dbus-next", "systemd-python", "pytest-asyncio"]
+dependencies = ["dbus-next", "systemd-python", "pytest-asyncio", "pyyaml"]
 
 [project.optional-dependencies]
 gpu = ["cuda-bindings"]
@@ -23,7 +23,7 @@ healthagent-install = "healthagent.install:main"
 include-package-data = true
 
 [tool.setuptools.package-data]
-healthagent = ["logging.conf", "etc/*", "tools/*"]
+healthagent = ["logging.conf", "defaults.yaml", "etc/*", "tools/*"]
 
 [tool.setuptools.packages.find]
 include = ["healthagent"]

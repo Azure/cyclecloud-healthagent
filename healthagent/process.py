@@ -28,8 +28,8 @@ class ProcessMonitor(HealthModule):
     PID_MAX_WARN_PCT = 10           # warn at 10% of pid_max
     PID_SATURATION_PCT = 50         # error at 50% of pid_max
 
-    def __init__(self, reporter: Reporter):
-        super().__init__(reporter)
+    def __init__(self, reporter: Reporter, config: dict | None = None):
+        super().__init__(reporter, config)
         self.pid_max = self._read_pid_max()
         self.cpu_count = os.cpu_count() or 1
         self.zombie_warn_threshold = min(
