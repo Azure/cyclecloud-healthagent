@@ -1,0 +1,142 @@
+# ──────────────────────────────────────────────────────────
+# Healthagent defaults — shipped with the package.
+# Override any value via /etc/healthagent/config.yaml
+# ──────────────────────────────────────────────────────────
+
+modules:
+  - gpu
+  - systemd
+  - network
+  - kmsg
+  - proc
+
+# ── Network module ──────────────────────────────────────
+network:
+  infiniband:
+    state:
+      eval: ne
+      error: "4: ACTIVE"
+      msg: "IB link is not active"
+    phys_state:
+      eval: ne
+      error: "5: LinkUp"
+      msg: "IB link not in state LinkUp"
+    link_downed:
+      eval: gt
+      error: 3
+      msg: "IB link down count exceeded the threshold"
+    link_error_recovery:
+      eval: gt
+      warning: 3
+      msg: "IB link error recovery exceeded the threshold"
+    operstate:
+      eval: ne
+      warning: up
+      msg: "IPoIB not in state up"
+    carrier_down_count:
+      eval: gt
+      warning: 5
+      msg: "IPoIB carrier down count exceeded threshold"
+  ethernet:
+    carrier_down_count:
+      eval: gt
+      warning: 3
+      msg: "carrier_down_count exceeded threshold"
+    operstate:
+      eval: ne
+      error: up
+      msg: "interface not in state up"
+
+# ── GPU module ──────────────────────────────────────────
+gpu:
+  max_keep_samples: 300
+
+  # By default all XIDS are treated as error.
+  # XIDS in warning list are downgraded to warning.
+  # If error list is explictly specified, then only
+  # specific XIDS will be treated as ERROR.
+  xid:
+    warning: [43, 63, 13, 31, 66, 94, 154]
+    ignore: []
+    error: []
+
+  diagnostics:
+    prolog:
+      tests: short
+      params: ""
+    epilog:
+      tests: medium
+      params: ""
+
+  field_watches:
+    DCGM_FI_DEV_GPU_TEMP:
+      eval: gt
+      warning: 83
+      error: 90
+      category: Thermal
+      message: "GPU {gpu} temperature {value}°C exceeds {threshold}°C"
+    DCGM_FI_DEV_CLOCKS_EVENT_REASONS:
+      eval: bitmask
+      error: 0xE8
+      category: Clocks
+      message: "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"
+    DCGM_FI_DEV_PERSISTENCE_MODE:
+      eval: ne
+      error: 1
+      category: System
+      message: "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."
+    DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION:
+      eval: in
+      warning: [2]
+      error: [3, 4]
+      category: System
+      message: "GPU {gpu} recovery action requested (action: {value})"
+    DCGM_FI_DEV_ROW_REMAP_FAILURE:
+      eval: ne
+      error: 0
+      category: Memory
+      message: "GPU {gpu} row remap failure detected"
+    DCGM_FI_DEV_ECC_DBE_VOL_TOTAL:
+      eval: gt
+      error: 0
+      category: Memory
+      message: "GPU {gpu} volatile DBE errors detected: {value}"
+    DCGM_FI_DEV_RETIRED_SBE:
+      eval: gt
+      warning: 50
+      error: 63
+      category: Memory
+      message: "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"
+    DCGM_FI_DEV_ECC_SBE_AGG_TOTAL:
+      eval: delta_gt
+      warning: 100
+      category: Memory
+      message: "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"
+    DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
+      eval: delta_gt
+      warning: 50
+      error: 200
+      category: PCIe
+      message: "GPU {gpu} PCIe replay rate {value:.0f}/min exceeds {threshold}/min"
+
+# ── Systemd module ──────────────────────────────────────
+systemd:
+  base_services:
+    - munge.service
+    - slurmd.service
+    - slurmctld.service
+    - slurmdbd.service
+    - slurmrestd.service
+  gpu_services:
+    - nvidia-imex.service
+    - nvidia-dcgm.service
+    - nvidia-persistenced.service
+
+# ── Process module ──────────────────────────────────────
+proc:
+  zombie_per_core: 50
+  pid_max_warn_pct: 10
+  pid_saturation_pct: 50
+
+# ── Kmsg module ─────────────────────────────────────────
+kmsg: {}

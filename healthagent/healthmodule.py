@@ -17,8 +17,9 @@ class HealthModule(ABC):
 
     """
 
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, config: dict | None = None):
         self.reporter = reporter
+        self.config = config or {}
         self._handler_cache = {}
         self._checks_registry = None
 

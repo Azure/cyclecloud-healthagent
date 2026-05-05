@@ -10,6 +10,7 @@ from time import perf_counter
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
 from healthagent.profiler import Profiler
+from healthagent.config import load_config
 from importlib.metadata import version, PackageNotFoundError
 
 try:
@@ -149,6 +150,8 @@ class Healthagent:
                 response = cls._list_module_checks(attribute_flag=flag)
             elif command == "version":
                 response = VERSION
+            elif command == "show_config":
+                response = cls.config
             else:
                 raise ValueError("Invalid message received")
 
@@ -184,12 +187,19 @@ class Healthagent:
 
     @classmethod
     async def initialize_modules(cls):
+        cls.config = load_config()
+        enabled = cls.config.get("modules", [])
+
         for module_name, import_path, class_name in cls.MODULE_REGISTRY:
+            if module_name not in enabled:
+                log.info(f"Module {module_name} disabled by config")
+                continue
             try:
                 mod = importlib.import_module(import_path)
                 instance = getattr(mod, class_name)
                 reporter = cls.get_reporter(module=module_name)
-                instance_obj = instance(reporter=reporter)
+                module_config = cls.config.get(module_name, {})
+                instance_obj = instance(reporter=reporter, config=module_config)
                 await instance_obj.create()
                 log.info(f"Initialized module: {module_name}")
             except ImportError as e:

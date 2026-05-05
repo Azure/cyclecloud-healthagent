@@ -62,8 +62,8 @@ class NetworkInterface:
 
 class NetworkHealthChecks(HealthModule):
 
-    def __init__(self, reporter: Reporter):
-        super().__init__(reporter)
+    def __init__(self, reporter: Reporter, config: dict | None = None):
+        super().__init__(reporter, config)
 
     async def create(self):
         await self.reporter.clear_all_errors()

@@ -20,9 +20,9 @@ class GpuNotFoundException(Exception):
 
 class GpuHealthChecks(HealthModule):
 
-    def __init__(self, reporter: Reporter):
+    def __init__(self, reporter: Reporter, config: dict | None = None):
 
-        super().__init__(reporter)
+        super().__init__(reporter, config)
 
         # TODO: Move this to config file
         self.test_mode = os.getenv('DCGM_TEST_MODE', 'false').lower() == 'true'

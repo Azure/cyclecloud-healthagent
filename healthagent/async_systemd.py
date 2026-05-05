@@ -20,8 +20,8 @@ class SystemdMonitor(HealthModule):
     documentation: https://www.freedesktop.org/wiki/Software/systemd/dbus/
     """
 
-    def __init__(self, reporter: Reporter):
-        super().__init__(reporter)
+    def __init__(self, reporter: Reporter, config: dict | None = None):
+        super().__init__(reporter, config)
         self.state = dict()
         self.bus = None
         self.manager = None
