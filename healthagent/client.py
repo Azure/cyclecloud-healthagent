@@ -3,6 +3,7 @@ import logging
 import sys
 import socket
 import json
+import yaml
 
 SOCKET_PATH = "/opt/healthagent/run/health.sock"
 MESSAGE_SIZE = 4096
@@ -155,6 +156,10 @@ def main():
         choices=["all", "epilog", "prolog"],
         help="List available checks by type (default: all). Example: health -l epilog"
     )
+    group.add_argument(
+        "-C", "--show-config", action="store_true",
+        help="Show the effective (merged) configuration loaded by the running daemon"
+    )
 
     parser.add_argument(
         "-c", "--check", action="append", nargs="+", metavar="NAME",
@@ -170,7 +175,7 @@ def main():
         level=logging.ERROR
         )
 
-    if not (args.epilog or args.prolog or args.version or args.list_checks):
+    if not (args.epilog or args.prolog or args.version or args.list_checks or args.show_config):
         args.status = True
 
     checks = parse_check_args(args.check)
@@ -178,7 +183,12 @@ def main():
     if checks and not (args.epilog or args.prolog):
         parser.error("-c/--check can only be used with -e/--epilog or -p/--prolog")
 
-    if args.list_checks:
+    if args.show_config:
+        response = get_response(command={"command": "show_config"}, timeout=10)
+        if not response:
+            sys.exit(-1)
+        print(yaml.safe_dump(response, default_flow_style=False, sort_keys=False))
+    elif args.list_checks:
         command = {"command": "list_checks", "type": "all"}
         response = get_response(command=command, timeout=10)
         if not response:
