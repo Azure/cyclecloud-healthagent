@@ -189,6 +189,10 @@ class Healthagent:
     async def initialize_modules(cls):
         cls.config = load_config()
         enabled = cls.config.get("modules", [])
+        if not isinstance(enabled, list) or not all(isinstance(m, str) for m in enabled):
+            raise ValueError(
+                f"'modules' in config must be a list of strings, got: {enabled!r}"
+            )
 
         for module_name, import_path, class_name in cls.MODULE_REGISTRY:
             if module_name not in enabled:

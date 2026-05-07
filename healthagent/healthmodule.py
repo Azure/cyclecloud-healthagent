@@ -19,7 +19,7 @@ class HealthModule(ABC):
 
     def __init__(self, reporter: Reporter, config: dict | None = None):
         self.reporter = reporter
-        self.config = config or {}
+        self.config = config if config is not None else {}
         self._handler_cache = {}
         self._checks_registry = None
 

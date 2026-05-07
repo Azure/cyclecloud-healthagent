@@ -1,6 +1,3 @@
-import os
-import pytest
-import tempfile
 import yaml
 from unittest.mock import patch
 
@@ -84,27 +81,23 @@ class TestDeepMerge:
 class TestLoadConfig:
 
     def test_loads_defaults_only(self, tmp_path):
-        """When no config.yaml exists, returns defaults unchanged."""
+        """When no config.yaml exists, returns packaged defaults unchanged."""
         defaults = {"modules": ["gpu", "network"], "gpu": {"temp": 83}}
-        defaults_file = tmp_path / "defaults.yaml"
-        defaults_file.write_text(yaml.dump(defaults))
 
-        with patch("healthagent.config.CONFIG_DIR", str(tmp_path)):
+        with patch("healthagent.config._load_packaged_defaults", return_value=defaults):
             config = load_config(config_path=str(tmp_path / "nonexistent.yaml"))
 
         assert config == defaults
 
     def test_merges_overrides(self, tmp_path):
-        """User config.yaml overrides are merged into defaults."""
+        """User config.yaml overrides are merged into packaged defaults."""
         defaults = {"modules": ["gpu", "network"], "gpu": {"temp": 83, "error": 90}}
         overrides = {"gpu": {"temp": 78}}
 
-        defaults_file = tmp_path / "defaults.yaml"
-        defaults_file.write_text(yaml.dump(defaults))
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump(overrides))
 
-        with patch("healthagent.config.CONFIG_DIR", str(tmp_path)):
+        with patch("healthagent.config._load_packaged_defaults", return_value=defaults):
             config = load_config(config_path=str(config_file))
 
         assert config["gpu"]["temp"] == 78
@@ -116,22 +109,18 @@ class TestLoadConfig:
         defaults = {"gpu": {"field_watches": {"TEMP": {"warn": 83}, "PCIE": {"warn": 50}}}}
         overrides = {"gpu": {"field_watches": {"TEMP": None}}}
 
-        defaults_file = tmp_path / "defaults.yaml"
-        defaults_file.write_text(yaml.dump(defaults))
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump(overrides))
 
-        with patch("healthagent.config.CONFIG_DIR", str(tmp_path)):
+        with patch("healthagent.config._load_packaged_defaults", return_value=defaults):
             config = load_config(config_path=str(config_file))
 
         assert "TEMP" not in config["gpu"]["field_watches"]
         assert config["gpu"]["field_watches"]["PCIE"] == {"warn": 50}
 
-    def test_falls_back_to_package_defaults(self, tmp_path):
-        """When defaults.yaml is not in CONFIG_DIR, falls back to packaged defaults."""
-        # tmp_path has no defaults.yaml, so it should fall back to importlib.resources
-        with patch("healthagent.config.CONFIG_DIR", str(tmp_path)):
-            config = load_config(config_path=str(tmp_path / "nonexistent.yaml"))
+    def test_loads_packaged_defaults(self, tmp_path):
+        """Always loads packaged defaults.yaml when no user config is present."""
+        config = load_config(config_path=str(tmp_path / "nonexistent.yaml"))
 
         # Should have loaded the real packaged defaults.yaml
         assert "modules" in config

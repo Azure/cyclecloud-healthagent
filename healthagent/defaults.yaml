@@ -53,7 +53,7 @@ gpu:
 
   # By default all XIDS are treated as error.
   # XIDS in warning list are downgraded to warning.
-  # If error list is explictly specified, then only
+  # If error list is explicitly specified, then only
   # specific XIDS will be treated as ERROR.
   xid:
     warning: [43, 63, 13, 31, 66, 94, 154]

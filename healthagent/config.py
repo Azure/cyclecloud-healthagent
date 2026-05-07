@@ -28,24 +28,31 @@ def deep_merge(base: dict, override: dict) -> dict:
     return merged
 
 
+def _load_packaged_defaults() -> dict:
+    """Load the defaults.yaml bundled with the package."""
+    with importlib.resources.files("healthagent").joinpath("defaults.yaml").open() as f:
+        return yaml.safe_load(f)
+
+
 def load_config(config_path: str = CONFIG_FILE) -> dict:
     """Load defaults from the package, then overlay user config if present."""
-    defaults_path = os.path.join(CONFIG_DIR, "defaults.yaml")
-    if os.path.isfile(defaults_path):
-        with open(defaults_path) as f:
-            config = yaml.safe_load(f)
-    else:
-        log.error(f"defaults.yaml not found at {defaults_path}, falling back to packaged defaults")
-        with importlib.resources.open_text("healthagent", "defaults.yaml") as f:
-            config = yaml.safe_load(f)
-        defaults_path = "healthagent (package)"
 
-    if config:
-        log.debug(f"Loaded default config from {defaults_path}")
+    config = _load_packaged_defaults()
+
+    if config is None:
+        config = {}
+    if not isinstance(config, dict):
+        raise ValueError(f"defaults.yaml must be a YAML mapping, got {type(config).__name__}")
+
+    log.debug("Loaded default config from package")
     if os.path.isfile(config_path):
         log.info(f"Loading config overrides from {config_path}")
         with open(config_path) as f:
-            overrides = yaml.safe_load(f) or {}
+            overrides = yaml.safe_load(f)
+        if overrides is None:
+            overrides = {}
+        if not isinstance(overrides, dict):
+            raise ValueError(f"{config_path} must be a YAML mapping, got {type(overrides).__name__}")
         config = deep_merge(config, overrides)
     else:
         log.debug(f"No config file at {config_path}")

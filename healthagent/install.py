@@ -7,10 +7,11 @@ def main():
     os.makedirs(etc_dir, exist_ok=True)
 
     # Copy defaults.yaml to /etc/healthagent/ for operator reference
-    with importlib.resources.path("healthagent", "defaults.yaml") as defaults_src:
-        defaults_dst = os.path.join(etc_dir, "defaults.yaml")
-        shutil.copy2(str(defaults_src), defaults_dst)
-        print(f"Copied {defaults_src} to {defaults_dst}")
+    defaults_src = importlib.resources.files("healthagent").joinpath("defaults.yaml")
+    defaults_dst = os.path.join(etc_dir, "defaults.yaml")
+    with importlib.resources.as_file(defaults_src) as src_path:
+        shutil.copy2(str(src_path), defaults_dst)
+    print(f"Copied defaults.yaml to {defaults_dst}")
 
     # Copy example scripts
     for fname in ["health.sh.example", "epilog.sh.example"]:

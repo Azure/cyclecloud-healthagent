@@ -187,7 +187,7 @@ def main():
         response = get_response(command={"command": "show_config"}, timeout=10)
         if not response:
             sys.exit(-1)
-        print(yaml.dump(response, default_flow_style=False, sort_keys=False))
+        print(yaml.safe_dump(response, default_flow_style=False, sort_keys=False))
     elif args.list_checks:
         command = {"command": "list_checks", "type": "all"}
         response = get_response(command=command, timeout=10)
