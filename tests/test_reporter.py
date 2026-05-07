@@ -196,16 +196,16 @@ def test_aux_data_defaults_to_none():
 
 
 def test_view_cli_excludes_marked_fields():
-    """view(cli_exclude=True) should omit fields marked with cli_exclude metadata."""
+    """view() should omit fields marked with cli_exclude metadata. cli_exclude is True by default"""
     report = HealthReport(
         status=HealthStatus.ERROR,
         description="GPU failure",
         details="long error trace here",
     )
-    view_full = report.view()
+    view_full = report.view(cli_exclude=False)
     assert "details" in view_full
 
-    view_cli = report.view(cli_exclude=True)
+    view_cli = report.view()
     assert "details" not in view_cli
     assert view_cli["status"] == "Error"
     assert view_cli["description"] == "GPU failure"
