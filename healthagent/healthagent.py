@@ -44,22 +44,6 @@ class Healthagent:
         ("proc",    "healthagent.process",       "ProcessMonitor")
     ]
 
-    # TODO: TEMPORARY — Replace with config-file-driven service lists.
-    # Base services always monitored regardless of hardware.
-    SYSTEMD_BASE_SERVICES = [
-        "munge.service",
-        "slurmd.service",
-        "slurmctld.service",
-        "slurmdbd.service",
-        "slurmrestd.service",
-    ]
-    # Additional services monitored only when GPUs are present (gpu module loaded).
-    SYSTEMD_GPU_SERVICES = [
-        "nvidia-imex.service",
-        "nvidia-dcgm.service",
-        "nvidia-persistenced.service",
-    ]
-
     @classmethod
     def handler(cls, signum, frame):
 
@@ -223,28 +207,23 @@ class Healthagent:
                     log.exception(f"Failed to initialize module {module_name}")
             else:
                 cls.modules[module_name] = instance_obj
-        await cls.configure_systemd_monitor()
 
-    @classmethod
-    def get_systemd_services(cls):
-        """TODO: TEMPORARY — Returns the list of systemd services to monitor.
-        Replace with config-file-based resolution."""
-        services = list(cls.SYSTEMD_BASE_SERVICES)
-        if "gpu" in cls.modules:
-            services.extend(cls.SYSTEMD_GPU_SERVICES)
-        return services
-
-    @classmethod
-    async def configure_systemd_monitor(cls):
-        """Wire the systemd module with the resolved service list.
-        Must be called after initialize_modules()."""
         systemd_module = cls.modules.get("systemd")
-        if systemd_module is None:
-            log.info("Systemd module not initialized; skipping service monitor setup")
-            return
-        services = cls.get_systemd_services()
-        log.info(f"Configuring systemd monitor for services: {services}")
-        await systemd_module.add_monitor(services=services)
+        if systemd_module is not None:
+            services = []
+            for loaded_module in cls.modules:
+                module_services = cls.config.get(loaded_module, {}).get("services", [])
+                if module_services is None:
+                    module_services = []
+                if not isinstance(module_services, list):
+                    log.warning(
+                        f"Config '{loaded_module}.services' must be a list, "
+                        f"got {type(module_services).__name__!r} — skipping"
+                    )
+                    continue
+                services.extend(module_services)
+            log.info(f"Configuring systemd monitor for services: {services}")
+            await systemd_module.add_monitor(services=services)
 
     @Scheduler.periodic(60)
     @classmethod
