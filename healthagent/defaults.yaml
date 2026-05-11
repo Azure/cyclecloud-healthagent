@@ -12,6 +12,8 @@ modules:
 
 # ── Network module ──────────────────────────────────────
 network:
+  services: []
+
   infiniband:
     state:
       eval: ne
@@ -49,6 +51,11 @@ network:
 
 # ── GPU module ──────────────────────────────────────────
 gpu:
+  services:
+    - nvidia-imex.service
+    - nvidia-dcgm.service
+    - nvidia-persistenced.service
+
   max_keep_samples: 300
 
   # By default all XIDS are treated as error.
@@ -121,16 +128,12 @@ gpu:
 
 # ── Systemd module ──────────────────────────────────────
 systemd:
-  base_services:
+  services:
     - munge.service
     - slurmd.service
     - slurmctld.service
     - slurmdbd.service
     - slurmrestd.service
-  gpu_services:
-    - nvidia-imex.service
-    - nvidia-dcgm.service
-    - nvidia-persistenced.service
 
 # ── Process module ──────────────────────────────────────
 proc:
