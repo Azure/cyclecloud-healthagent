@@ -1,12 +1,100 @@
 import os
 import logging
 import importlib.resources
+from enum import StrEnum
+from typing import Union
+
 import yaml
+from pydantic import BaseModel
+
 
 log = logging.getLogger(__name__)
 
 CONFIG_DIR = "/etc/healthagent"
 CONFIG_FILE = f"{CONFIG_DIR}/config.yaml"
+
+
+# ── Pydantic config models ─────────────────────────────────
+
+class EvalType(StrEnum):
+    GT = "gt"
+    LT = "lt"
+    GE = "ge"
+    LE = "le"
+    EQ = "eq"
+    NE = "ne"
+    IN = "in"
+    BITMASK = "bitmask"
+    DELTA_GT = "delta_gt"
+
+
+class ModuleName(StrEnum):
+    GPU = "gpu"
+    SYSTEMD = "systemd"
+    NETWORK = "network"
+    KMSG = "kmsg"
+    PROC = "proc"
+
+
+class ThresholdCheck(BaseModel, extra="forbid"):
+    """A single threshold-based health check rule (network or GPU field watch)."""
+    eval: EvalType
+    msg: str | None = None
+    category: str | None = None
+    warning: Union[int, float, str, list] | None = None
+    error: Union[int, float, str, list] | None = None
+
+
+class ModuleConfig(BaseModel):
+    """Base config shared by all health modules."""
+    services: list[str] = []
+
+
+class NetworkConfig(ModuleConfig):
+    infiniband: dict[str, ThresholdCheck] = {}
+    ethernet: dict[str, ThresholdCheck] = {}
+
+
+class XidConfig(BaseModel):
+    warning: list[int] = []
+    ignore: list[int] = []
+    error: list[int] = []
+
+
+class DiagPhase(BaseModel):
+    tests: str = "short"
+    params: str = ""
+
+
+class DiagnosticsConfig(BaseModel):
+    prolog: DiagPhase = DiagPhase()
+    epilog: DiagPhase = DiagPhase(tests="medium")
+
+
+class GpuConfig(ModuleConfig):
+    max_keep_samples: int = 300
+    xid: XidConfig = XidConfig()
+    diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    field_watches: dict[str, ThresholdCheck] = {}
+
+
+class SystemdConfig(ModuleConfig):
+    pass
+
+
+class ProcConfig(ModuleConfig):
+    zombie_per_core: int | float = 50
+    pid_max_warn_pct: int | float = 10
+    pid_saturation_pct: int | float = 50
+
+
+class HealthagentConfig(BaseModel, extra="allow"):
+    modules: list[ModuleName] = list(ModuleName)
+    network: NetworkConfig = NetworkConfig()
+    gpu: GpuConfig = GpuConfig()
+    systemd: SystemdConfig = SystemdConfig()
+    proc: ProcConfig = ProcConfig()
+    kmsg: ModuleConfig = ModuleConfig()
 
 
 def deep_merge(base: dict, override: dict) -> dict:
@@ -34,8 +122,12 @@ def _load_packaged_defaults() -> dict:
         return yaml.safe_load(f)
 
 
-def load_config(config_path: str = CONFIG_FILE) -> dict:
-    """Load defaults from the package, then overlay user config if present."""
+def load_config(config_path: str = CONFIG_FILE) -> HealthagentConfig:
+    """Load defaults from the package, then overlay user config if present.
+
+    Returns a validated HealthagentConfig object. Raises
+    pydantic.ValidationError if the merged config has type errors.
+    """
 
     config = _load_packaged_defaults()
 
@@ -57,4 +149,4 @@ def load_config(config_path: str = CONFIG_FILE) -> dict:
     else:
         log.debug(f"No config file at {config_path}")
 
-    return config
+    return HealthagentConfig.model_validate(config)
