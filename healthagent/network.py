@@ -1,11 +1,12 @@
 import logging
+import math
 from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass, fields
 from healthagent import healthcheck
-from healthagent.util import read_kernel_attrs, evaluate
+from healthagent.util import read_kernel_attrs, evaluate, TimeSeries
 from healthagent.healthmodule import HealthModule
-from healthagent.config import NetworkConfig
+from healthagent.config import NetworkConfig, ThresholdCheck
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
 from healthagent.scheduler import Scheduler
 
@@ -19,21 +20,6 @@ class NetDevType(Enum):
     ETHERNET = 1
     INFINIBAND = 32
     UNKNOWN = -1
-
-_NET_CONFIG = {
-    "infiniband": {
-        "state":                {"eval": "ne", "error": "4: ACTIVE", "msg": "IB link is not active"},
-        "phys_state":           {"eval": "ne", "error": "5: LinkUp", "msg": "IB link not in state LinkUp"},
-        "link_downed":          {"eval": "gt", "error": 3, "msg": "IB link down count exceeded the threshold"},
-        "link_error_recovery":  {"eval": "gt", "warning": 3, "msg": "IB link error recovery exceeded the threshold"},
-        "operstate":            {"eval": "ne", "warning": "up", "msg": "IPoIB not in state up"},
-        "carrier_down_count":   {"eval": "gt", "warning": 5, "msg": "IPoIB carrier down count exceeded threshold"},
-    },
-    "ethernet": {
-        "carrier_down_count":   {"eval": "gt", "warning": 3, "msg": "carrier_down_count exceeded threshold"},
-        "operstate":            {"eval": "ne", "error": "up", "msg": "interface not in state up"},
-    },
-}
 
 
 @dataclass
@@ -65,6 +51,10 @@ class NetworkHealthChecks(HealthModule):
 
     def __init__(self, reporter: Reporter, config: 'NetworkConfig | None' = None):
         super().__init__(reporter, config or NetworkConfig())
+        self.config: NetworkConfig = self.config
+        self._time_series = {}     # {key: TimeSeries} — windowed sample buffers
+        self._in_error = {}        # {key: bool} — currently in error state?
+        self._trigger_count = {}   # {key: int} — OK→ERROR transition count
 
     async def create(self):
         await self.reporter.clear_all_errors()
@@ -131,14 +121,41 @@ class NetworkHealthChecks(HealthModule):
         # Derive port-level field names from the IBPort dataclass
         _ib_port_fields = {f.name for f in fields(IBPort)}
 
-        def check_field(iface_name, field, check, value, port_num=None):
+        def check_field(iface_name, field, check: 'ThresholdCheck', value, port_num=None):
+            key = (iface_name, field, port_num)
+            max_strikes = check.strikes
+
+            # Permanently degraded — re-report error without re-evaluating
+            if max_strikes > 0 and self._trigger_count.get(key, 0) >= max_strikes:
+                msg = check.msg or f"{field} threshold exceeded"
+                if port_num is not None:
+                    msg = f"port {port_num}: {msg}"
+                custom_fields.setdefault(iface_name, {}).setdefault("errors", []).append(msg)
+                details.append(f"ERROR: {iface_name} - {msg}")
+                report.escalate(HealthStatus.ERROR)
+                return
+
+            eval_type = check.eval
+            eval_kwargs = {}
+            if eval_type == "window_gt":
+                window = check.window or 3600
+                if key not in self._time_series:
+                    self._time_series[key] = TimeSeries(maxlen=math.ceil(window / 60) + 1)
+                self._time_series[key].record(value)
+                eval_kwargs["samples"] = self._time_series[key]
+                eval_kwargs["window"] = window
+
+            triggered = False
+            triggered_level = None
             for level in ("error", "warning"):
-                thresh = check.get(level)
+                thresh = getattr(check, level, None)
                 if thresh is None:
                     continue
-                triggered, _ = evaluate(check["eval"], value, thresh)
-                if triggered:
-                    msg = check.get("msg", f"{field}={value} (threshold: {level} {check['eval']} {thresh})")
+                hit, _ = evaluate(eval_type, value, thresh, **eval_kwargs)
+                if hit:
+                    triggered = True
+                    triggered_level = level
+                    msg = check.msg or f"{field}={value} (threshold: {level} {eval_type} {thresh})"
                     if port_num is not None:
                         msg = f"port {port_num}: {msg}"
                     if level == "error":
@@ -151,12 +168,20 @@ class NetworkHealthChecks(HealthModule):
                         report.escalate(HealthStatus.WARNING)
                     break  # error takes precedence over warning
 
+            # Strike tracking: count OK→ERROR transitions
+            if triggered and triggered_level == "error" and max_strikes > 0:
+                if not self._in_error.get(key):
+                    self._in_error[key] = True
+                    self._trigger_count[key] = self._trigger_count.get(key, 0) + 1
+            elif triggered_level != "error":
+                self._in_error[key] = False
+
         for ni in interfaces:
 
             custom_fields[ni.name] = {}
             # Select the right config section based on interface type
             config_key = "infiniband" if ni.type == NetDevType.INFINIBAND else "ethernet"
-            checks = _NET_CONFIG.get(config_key, {})
+            checks: dict[str, ThresholdCheck] = getattr(self.config, config_key, {})
 
             # Evaluate each configured check
             for field, check in checks.items():

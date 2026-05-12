@@ -24,9 +24,11 @@ network:
       error: "5: LinkUp"
       msg: "IB link not in state LinkUp"
     link_downed:
-      eval: gt
+      eval: window_gt
+      window: 10800
       error: 3
-      msg: "IB link down count exceeded the threshold"
+      strikes: 1
+      msg: "IB link flapped 3+ times within a 3-hour window"
     link_error_recovery:
       eval: gt
       warning: 3
@@ -58,7 +60,7 @@ gpu:
   # By default all XIDS are treated as error.
   # XIDS in warning list are downgraded to warning.
   # If error list is explicitly specified, then only
-  # specific XIDS will be treated as ERROR.
+  # specified XIDS will be treated as ERROR.
   xid:
     warning: [43, 63, 13, 31, 66, 94, 154]
     ignore: []

@@ -5,7 +5,7 @@ from enum import StrEnum
 from typing import Union
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 
 log = logging.getLogger(__name__)
@@ -26,6 +26,7 @@ class EvalType(StrEnum):
     IN = "in"
     BITMASK = "bitmask"
     DELTA_GT = "delta_gt"
+    WINDOW_GT = "window_gt"
 
 
 class ModuleName(StrEnum):
@@ -43,6 +44,22 @@ class ThresholdCheck(BaseModel, extra="forbid"):
     category: str | None = None
     warning: Union[int, float, str, list] | None = None
     error: Union[int, float, str, list] | None = None
+    window: int | None = None
+    strikes: int = 0
+
+    @field_validator('window')
+    @classmethod
+    def window_must_be_positive(cls, v):
+        if v is not None and v <= 0:
+            raise ValueError('window must be > 0')
+        return v
+
+    @field_validator('strikes')
+    @classmethod
+    def strikes_must_be_non_negative(cls, v):
+        if v < 0:
+            raise ValueError('strikes must be >= 0')
+        return v
 
 
 class ModuleConfig(BaseModel):

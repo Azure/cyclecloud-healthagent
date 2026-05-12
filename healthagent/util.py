@@ -1,5 +1,8 @@
+import bisect
 import operator
 import os
+import time
+from collections import deque
 from pathlib import Path
 
 
@@ -128,22 +131,75 @@ def _read_top_level(root: str) -> dict:
     return result
 
 
+class TimeSeries:
+    """Ring buffer of timestamped samples for windowed evaluation.
+
+    Modules create and manage their own instances. Pass to evaluate()
+    via the samples parameter for window_gt evaluation.
+
+    Args:
+        maxlen: Maximum number of samples to retain. When exceeded,
+                the oldest sample is discarded. Modules should size this
+                based on window / poll_interval (e.g. 10800/60 + 1 = 181).
+    """
+
+    def __init__(self, maxlen=None):
+        self._samples = deque(maxlen=maxlen)
+
+    def record(self, value, timestamp=None):
+        """Append a sample. Timestamp defaults to time.monotonic()."""
+        if timestamp is None:
+            timestamp = time.monotonic()
+        self._samples.append((value, timestamp))
+
+    def delta_in_window(self, window_seconds):
+        """Compute value delta within the time window.
+
+        Returns (delta: int|float, sufficient: bool).
+        sufficient is False if the recorded time span is less than
+        window_seconds (not enough history to evaluate).
+        """
+        if len(self._samples) < 2:
+            return 0, False
+
+        latest_val, latest_ts = self._samples[-1]
+        oldest_val, oldest_ts = self._samples[0]
+
+        if (latest_ts - oldest_ts) < window_seconds:
+            return 0, False
+
+        cutoff = latest_ts - window_seconds
+        # Binary search for the oldest sample at or after the cutoff
+        timestamps = [s[1] for s in self._samples]
+        idx = bisect.bisect_left(timestamps, cutoff)
+        if idx < len(self._samples):
+            delta = latest_val - self._samples[idx][0]
+            return max(0, delta), True
+
+        return 0, False
+
+    def __len__(self):
+        return len(self._samples)
+
+
 def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
-             current_time=None, window=60):
+             current_time=None, window=60, samples: TimeSeries = None):
     """Unified threshold evaluation. Returns (triggered: bool, evaluated_value).
 
     For delta_gt, evaluated_value is the computed rate per window.
+    For window_gt, evaluated_value is the delta within the time window.
     For bitmask, evaluated_value is the matching bits (value & threshold).
     For all others, evaluated_value is the input value.
 
     Args:
-        eval_type: Comparison type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt)
+        eval_type: Comparison type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt, window_gt)
         value: Current value to evaluate
         threshold: Threshold to compare against (list for 'in' eval type)
         prev_value: Previous sample value (delta_gt only)
         prev_time: Previous sample timestamp in monotonic seconds (delta_gt only)
         current_time: Current sample timestamp in monotonic seconds (delta_gt only)
-        window: Time window in seconds for rate normalization (delta_gt only, default: 60)
+        window: Time window in seconds (delta_gt: rate normalization, window_gt: sliding window size)
+        samples: TimeSeries instance for recording and windowed evaluation (window_gt only)
     """
     eval_type = str(eval_type).strip().lower()
 
@@ -175,4 +231,11 @@ def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
             return False, 0.0
         rate = (delta * window) / elapsed
         return rate > threshold, rate
+    elif eval_type == "window_gt":
+        if samples is None:
+            return False, 0
+        delta, sufficient = samples.delta_in_window(window)
+        if not sufficient:
+            return False, delta
+        return delta >= threshold, delta
     raise ValueError(f"Unknown eval_type: {eval_type!r}")
