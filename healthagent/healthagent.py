@@ -10,7 +10,7 @@ from time import perf_counter
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
 from healthagent.profiler import Profiler
-from healthagent.config import load_config
+from healthagent.config import load_config, ModuleConfig
 from importlib.metadata import version, PackageNotFoundError
 
 try:
@@ -135,7 +135,7 @@ class Healthagent:
             elif command == "version":
                 response = VERSION
             elif command == "show_config":
-                response = cls.config
+                response = cls.config.model_dump(mode="json")
             else:
                 raise ValueError("Invalid message received")
 
@@ -172,27 +172,16 @@ class Healthagent:
     @classmethod
     async def initialize_modules(cls):
         cls.config = load_config()
-        enabled = cls.config.get("modules", [])
-        if not isinstance(enabled, list) or not all(isinstance(m, str) for m in enabled):
-            raise ValueError(
-                f"'modules' in config must be a list of strings, got: {enabled!r}"
-            )
 
         for module_name, import_path, class_name in cls.MODULE_REGISTRY:
-            if module_name not in enabled:
+            if module_name not in cls.config.modules:
                 log.info(f"Module {module_name} disabled by config")
                 continue
             try:
                 mod = importlib.import_module(import_path)
                 instance = getattr(mod, class_name)
                 reporter = cls.get_reporter(module=module_name)
-                module_config = cls.config.get(module_name, {})
-                if module_config is None:
-                    module_config = {}
-                if not isinstance(module_config, dict):
-                    raise ValueError(
-                        f"Config for module '{module_name}' must be a YAML mapping, got: {type(module_config).__name__!r}"
-                    )
+                module_config = getattr(cls.config, module_name, ModuleConfig()).model_dump()
                 instance_obj = instance(reporter=reporter, config=module_config)
                 await instance_obj.create()
                 log.info(f"Initialized module: {module_name}")
@@ -211,17 +200,9 @@ class Healthagent:
         systemd_module = cls.modules.get("systemd")
         if systemd_module is not None:
             services = []
-            for loaded_module in cls.modules:
-                module_services = cls.config.get(loaded_module, {}).get("services", [])
-                if module_services is None:
-                    module_services = []
-                if not isinstance(module_services, list):
-                    log.warning(
-                        f"Config '{loaded_module}.services' must be a list, "
-                        f"got {type(module_services).__name__!r} — skipping"
-                    )
-                    continue
-                services.extend(module_services)
+            for name in cls.modules:
+                module_cfg = getattr(cls.config, name, ModuleConfig())
+                services.extend(module_cfg.services)
             log.info(f"Configuring systemd monitor for services: {services}")
             await systemd_module.add_monitor(services=services)
 

@@ -81,50 +81,50 @@ gpu:
       warning: 83
       error: 90
       category: Thermal
-      message: "GPU {gpu} temperature {value}°C exceeds {threshold}°C"
+      msg: "GPU {gpu} temperature {value}°C exceeds {threshold}°C"
     DCGM_FI_DEV_CLOCKS_EVENT_REASONS:
       eval: bitmask
       error: 0xE8
       category: Clocks
-      message: "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"
+      msg: "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"
     DCGM_FI_DEV_PERSISTENCE_MODE:
       eval: ne
       error: 1
       category: System
-      message: "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."
+      msg: "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."
     DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION:
       eval: in
       warning: [2]
       error: [3, 4]
       category: System
-      message: "GPU {gpu} recovery action requested (action: {value})"
+      msg: "GPU {gpu} recovery action requested (action: {value})"
     DCGM_FI_DEV_ROW_REMAP_FAILURE:
       eval: ne
       error: 0
       category: Memory
-      message: "GPU {gpu} row remap failure detected"
+      msg: "GPU {gpu} row remap failure detected"
     DCGM_FI_DEV_ECC_DBE_VOL_TOTAL:
       eval: gt
       error: 0
       category: Memory
-      message: "GPU {gpu} volatile DBE errors detected: {value}"
+      msg: "GPU {gpu} volatile DBE errors detected: {value}"
     DCGM_FI_DEV_RETIRED_SBE:
       eval: gt
       warning: 50
       error: 63
       category: Memory
-      message: "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"
+      msg: "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"
     DCGM_FI_DEV_ECC_SBE_AGG_TOTAL:
       eval: delta_gt
       warning: 100
       category: Memory
-      message: "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"
+      msg: "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"
     DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
       eval: delta_gt
       warning: 50
       error: 200
       category: PCIe
-      message: "GPU {gpu} PCIe replay rate {value:.0f}/min exceeds {threshold}/min"
+      msg: "GPU {gpu} PCIe replay rate {value:.0f}/min exceeds {threshold}/min"
 
 # ── Systemd module ──────────────────────────────────────
 systemd:

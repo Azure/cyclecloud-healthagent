@@ -5,7 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "healthagent"
 version = "2.0.0"
-dependencies = ["dbus-next", "systemd-python", "pytest-asyncio", "pyyaml"]
+requires-python = ">=3.11"
+dependencies = ["dbus-next", "systemd-python", "pytest-asyncio", "pyyaml", "pydantic>=2,<3"]
 
 [project.optional-dependencies]
 gpu = ["cuda-bindings"]
