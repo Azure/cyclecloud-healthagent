@@ -314,60 +314,51 @@ Virtual interfaces (such as bridges, VLAN interfaces, and container networks) ar
 **Monitoring Behavior:**
 
 - **Periodic Checks**: Runs every 60 seconds to sample network interface state
-- **Sliding Window Analysis**: Tracks link down events over a 60-sample window to calculate link flap rates
+- **Windowed Analysis**: Uses `window_gt` evaluation to track link flap events over a configurable time window (default: 3 hours for IB `link_downed`)
 - **Physical Interfaces Only**: Automatically filters out virtual interfaces by checking sysfs device paths
-- **Auto-Clearing**: Automatically clears error reports when interfaces return to healthy operational state
+- **Strikes-Based Recovery**: The `strikes` parameter controls how many times a check can recover from error before the node is permanently degraded. With `strikes: 1` (default for `link_downed`), the first error is permanent. Set `strikes: 0` to allow unlimited recovery.
 
 **Alert Conditions:**
 
-The network monitor triggers alerts based on two conditions:
+The network monitor evaluates each configured check per interface. Default InfiniBand checks include:
 
-1. **Link Flapping (WARNING)**: When an interface goes down 1 or more times per hour
-   - Status: `Warning`
-   - Indicates unstable network connectivity that may impact workloads
-   - Includes `link_down_rate_per_hour` metric in custom fields
-
-2. **Interface Not Operational (ERROR)**: When an interface is not in the `up` operational state
+1. **Link Flapping (ERROR)**: When `link_downed` increases by 3 or more within a 3-hour window
    - Status: `Error`
-   - Indicates a critical network failure or misconfiguration
-   - Reports the current operational state (down, lowerlayerdown, etc.)
+   - Default: `eval: window_gt`, `error: 3`, `window: 10800`, `strikes: 1`
+   - Permanently degrades the node after the first occurrence (strikes=1)
+
+2. **Link State (ERROR)**: When IB link state is not `4: ACTIVE` or physical state is not `5: LinkUp`
+
+3. **Link Error Recovery (WARNING)**: When `link_error_recovery` count exceeds 3
+
+4. **IPoIB State (WARNING)**: When IPoIB `operstate` is not `up`
+
+5. **Carrier Down (WARNING)**: When `carrier_down_count` exceeds threshold (5 for IB, 3 for Ethernet)
+
+6. **Ethernet Operstate (ERROR)**: When Ethernet interface is not in the `up` operational state
 
 **Response to Network Issues:**
 
 When network problems are detected, healthagent:
-1. Sets appropriate health status (`WARNING` for flapping, `ERROR` for down interfaces)
+1. Sets appropriate health status (`WARNING` or `ERROR`) based on configured thresholds
 2. Creates a detailed report with:
    - List of affected interfaces
-   - Specific error conditions for each interface
-   - Link flap rates and state transition counts
-   - Current carrier and operational states
-3. Includes per-interface custom fields:
-   - `link_down_rate_per_hour`: Recent link failure rate
-   - `link_flap_since_uptime`: Total link state transitions since boot
-   - `error_count`: Number of errors for the interface
-   - `carrier`: Physical link status
-4. Reports the issue to CycleCloud (if enabled)
+   - Specific error conditions for each interface and port
+   - Current link and operational states
+3. Reports the issue to CycleCloud (if enabled)
 
 Example network interface alert:
 ```json
 {
   "network": {
-    "Network": {
+    "NetworkInterfaceCheck": {
       "status": "Error",
-      "message": "Network reports errors",
-      "description": "Network interfaces eth0,ib0 are not operational",
-      "details": "Network interface eth0 is not operational and in state down.\nNetwork interface ib0 went down 3 times in the last hour",
+      "description": "Network interfaces report errors",
+      "details": "ERROR: ib0 - port 1: IB link flapped 3+ times within a 3-hour window",
       "last_update": "2025-08-07T19:43:50 UTC",
-      "eth0": {
-        "link_down_rate_per_hour": 0,
-        "link_flap_since_uptime": 2,
-        "error_count": 1,
-        "carrier": "0"
-      },
       "ib0": {
-        "link_down_rate_per_hour": 3,
-        "link_flap_since_uptime": 15,
-        "error_count": 0
+        "errors": ["port 1: IB link flapped 3+ times within a 3-hour window"],
+        "warnings": []
       }
     }
   }

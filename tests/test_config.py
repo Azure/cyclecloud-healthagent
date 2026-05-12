@@ -226,6 +226,36 @@ class TestSchemaValidation:
         assert config.systemd.services == []
         assert config.proc.zombie_per_core == 50
 
+    def test_window_zero_rejected(self):
+        """window=0 is rejected by ThresholdCheck validator."""
+        with pytest.raises(ValidationError):
+            ThresholdCheck(eval=EvalType.WINDOW_GT, error=3, window=0)
+
+    def test_window_negative_rejected(self):
+        """Negative window is rejected by ThresholdCheck validator."""
+        with pytest.raises(ValidationError):
+            ThresholdCheck(eval=EvalType.WINDOW_GT, error=3, window=-100)
+
+    def test_window_positive_accepted(self):
+        """Positive window is accepted."""
+        check = ThresholdCheck(eval=EvalType.WINDOW_GT, error=3, window=3600)
+        assert check.window == 3600
+
+    def test_strikes_negative_rejected(self):
+        """Negative strikes is rejected by ThresholdCheck validator."""
+        with pytest.raises(ValidationError):
+            ThresholdCheck(eval=EvalType.GT, error=3, strikes=-1)
+
+    def test_strikes_zero_accepted(self):
+        """strikes=0 (unlimited recovery) is accepted."""
+        check = ThresholdCheck(eval=EvalType.GT, error=3, strikes=0)
+        assert check.strikes == 0
+
+    def test_strikes_positive_accepted(self):
+        """Positive strikes is accepted."""
+        check = ThresholdCheck(eval=EvalType.GT, error=3, strikes=2)
+        assert check.strikes == 2
+
     def test_model_dump_roundtrip(self):
         """model_dump produces a dict that can be re-validated."""
         config = HealthagentConfig.model_validate({

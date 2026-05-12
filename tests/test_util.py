@@ -1,4 +1,4 @@
-from healthagent.util import evaluate, read_kernel_attrs
+from healthagent.util import evaluate, read_kernel_attrs, TimeSeries
 from pathlib import Path
 import pytest
 
@@ -267,6 +267,200 @@ class TestEvaluateNormalization:
     def test_none_eval_type_raises(self):
         with pytest.raises(ValueError, match="Unknown eval_type"):
             evaluate(None, 85, 80)
+
+
+class TestTimeSeries:
+
+    def test_record_and_len(self):
+        ts = TimeSeries(maxlen=10)
+        assert len(ts) == 0
+        ts.record(5, timestamp=0.0)
+        ts.record(10, timestamp=1.0)
+        assert len(ts) == 2
+
+    def test_maxlen_evicts_oldest(self):
+        ts = TimeSeries(maxlen=3)
+        ts.record(1, timestamp=0.0)
+        ts.record(2, timestamp=1.0)
+        ts.record(3, timestamp=2.0)
+        ts.record(4, timestamp=3.0)
+        assert len(ts) == 3
+        # Oldest sample (1, 0.0) should be evicted
+        assert ts._samples[0] == (2, 1.0)
+
+    def test_delta_in_window_insufficient_samples(self):
+        ts = TimeSeries()
+        ts.record(5, timestamp=0.0)
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is False
+        assert delta == 0
+
+    def test_delta_in_window_insufficient_timespan(self):
+        ts = TimeSeries()
+        ts.record(0, timestamp=0.0)
+        ts.record(5, timestamp=50.0)
+        # Window is 100s but only 50s of data
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is False
+        assert delta == 0
+
+    def test_delta_in_window_exact_window(self):
+        ts = TimeSeries()
+        ts.record(10, timestamp=0.0)
+        ts.record(15, timestamp=100.0)
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is True
+        assert delta == 5
+
+    def test_delta_in_window_exceeds_window(self):
+        ts = TimeSeries()
+        ts.record(0, timestamp=0.0)
+        ts.record(3, timestamp=50.0)
+        ts.record(7, timestamp=150.0)
+        # Window=100, cutoff=50.0 — oldest in window is (3, 50.0)
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is True
+        assert delta == 4  # 7 - 3
+
+    def test_delta_in_window_all_samples_outside(self):
+        """If all samples are older than the cutoff except the latest,
+        the latest is both the cutoff match and the endpoint — delta=0."""
+        ts = TimeSeries()
+        ts.record(0, timestamp=0.0)
+        ts.record(5, timestamp=1.0)
+        ts.record(100, timestamp=500.0)
+        # Window=10, cutoff=490 — only (100, 500) is in window
+        delta, sufficient = ts.delta_in_window(10)
+        assert sufficient is True
+        assert delta == 0  # 100 - 100
+
+    def test_delta_in_window_no_samples(self):
+        ts = TimeSeries()
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is False
+        assert delta == 0
+
+    def test_default_timestamp_uses_monotonic(self):
+        ts = TimeSeries()
+        ts.record(1)
+        ts.record(2)
+        assert len(ts) == 2
+        # Timestamps should be monotonically increasing
+        assert ts._samples[1][1] >= ts._samples[0][1]
+
+    def test_counter_reset_clamps_to_zero(self):
+        """Counter reset (value drops) should return delta=0, not negative."""
+        ts = TimeSeries()
+        ts.record(50, timestamp=0.0)
+        ts.record(55, timestamp=50.0)
+        ts.record(0, timestamp=100.0)  # counter reset
+        delta, sufficient = ts.delta_in_window(100)
+        assert sufficient is True
+        assert delta == 0
+
+
+class TestEvaluateWindowGt:
+
+    def _build_ts(self, samples):
+        """Helper: build a TimeSeries from a list of (value, timestamp) pairs."""
+        ts = TimeSeries()
+        for val, t in samples:
+            ts.record(val, timestamp=t)
+        return ts
+
+    def test_no_samples_object(self):
+        triggered, val = evaluate("window_gt", 5, 3, window=100, samples=None)
+        assert triggered is False
+        assert val == 0
+
+    def test_insufficient_history(self):
+        ts = TimeSeries()
+        ts.record(5, timestamp=0.0)
+        # Only 1 sample, insufficient
+        triggered, delta = evaluate("window_gt", 5, 3, window=10800, samples=ts)
+        assert triggered is False
+
+    def test_insufficient_timespan(self):
+        ts = self._build_ts([(0, 0.0), (2, 60.0)])
+        # Window is 10800 but only 60s of data
+        triggered, delta = evaluate("window_gt", 2, 3, window=10800, samples=ts)
+        assert triggered is False
+
+    def test_triggers_when_delta_exceeds_threshold(self):
+        """3 flaps in 3-hour window should trigger with threshold=3."""
+        ts = self._build_ts([
+            (0, 0.0),
+            (1, 1800.0),
+            (2, 5400.0),
+            (4, 10800.0),
+        ])
+        # delta = 4 - 0 = 4 > 3
+        triggered, delta = evaluate("window_gt", 4, 3, window=10800, samples=ts)
+        assert triggered is True
+        assert delta == 4
+
+    def test_does_not_trigger_below_threshold(self):
+        """2 flaps in 3-hour window should not trigger with threshold=3."""
+        ts = self._build_ts([
+            (0, 0.0),
+            (1, 3600.0),
+            (2, 10800.0),
+        ])
+        # delta = 2 - 0 = 2, not > 3
+        triggered, delta = evaluate("window_gt", 2, 3, window=10800, samples=ts)
+        assert triggered is False
+        assert delta == 2
+
+    def test_exact_threshold_triggered(self):
+        """Delta exactly equal to threshold should trigger (gte)."""
+        ts = self._build_ts([
+            (0, 0.0),
+            (1, 3600.0),
+            (3, 10800.0),
+        ])
+        triggered, delta = evaluate("window_gt", 3, 3, window=10800, samples=ts)
+        assert triggered is True
+        assert delta == 3
+
+    def test_windowed_delta_uses_cutoff(self):
+        """Events outside the window should not count toward the delta."""
+        ts = self._build_ts([
+            (0, 0.0),       # outside window at t=10801
+            (3, 5000.0),
+            (4, 8000.0),
+            (5, 10801.0),
+        ])
+        # cutoff = 10801 - 10800 = 1.0
+        # Oldest in window is (3, 5000.0), delta = 5 - 3 = 2
+        triggered, delta = evaluate("window_gt", 5, 3, window=10800, samples=ts)
+        assert triggered is False
+        assert delta == 2
+
+    def test_evaluate_does_not_modify_timeseries(self):
+        """evaluate() should not record into the TimeSeries."""
+        ts = self._build_ts([(0, 0.0), (1, 10800.0)])
+        assert len(ts) == 2
+        evaluate("window_gt", 42, 100, window=10800, samples=ts)
+        assert len(ts) == 2
+
+    def test_spread_over_6_hours(self):
+        """4 flaps spread over 6 hours — first window has 2, second has 3."""
+        ts = self._build_ts([
+            (0, 0.0),
+            (1, 3600.0),     # 1hr
+            (2, 7200.0),     # 2hr
+            (3, 10860.0),    # 3hr+1min
+        ])
+        # cutoff = 10860 - 10800 = 60 → oldest in window is (1, 3600), delta = 3-1=2
+        triggered, delta = evaluate("window_gt", 3, 3, window=10800, samples=ts)
+        assert triggered is False
+
+        # Add sample at t=14400 (4hr)
+        ts.record(4, timestamp=14400.0)
+        # cutoff = 14400 - 10800 = 3600 → oldest in window is (1, 3600), delta = 4-1=3
+        triggered, delta = evaluate("window_gt", 4, 3, window=10800, samples=ts)
+        assert triggered is True
+        assert delta == 3
 
 
 class TestReadKernelAttrs:
