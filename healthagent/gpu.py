@@ -7,6 +7,7 @@ from datetime import datetime
 from healthagent import epilog,status,healthcheck
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
+from healthagent.config import GpuConfig
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
 from healthagent.bindings import *
 
@@ -20,9 +21,9 @@ class GpuNotFoundException(Exception):
 
 class GpuHealthChecks(HealthModule):
 
-    def __init__(self, reporter: Reporter, config: dict | None = None):
+    def __init__(self, reporter: Reporter, config: 'GpuConfig | None' = None):
 
-        super().__init__(reporter, config)
+        super().__init__(reporter, config or GpuConfig())
 
         # TODO: Move this to config file
         self.test_mode = os.getenv('DCGM_TEST_MODE', 'false').lower() == 'true'

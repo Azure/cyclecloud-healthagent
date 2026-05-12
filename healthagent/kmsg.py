@@ -6,13 +6,14 @@ from datetime import timedelta, datetime
 from healthagent.reporter import Reporter, HealthStatus, HealthReport
 from healthagent.scheduler import Scheduler
 from healthagent.healthmodule import HealthModule
+from healthagent.config import ModuleConfig
 import logging
 
 log = logging.getLogger(__name__)
 
 class KmsgReader(HealthModule):
 
-    def __init__(self, reporter: Reporter, config: dict | None = None):
+    def __init__(self, reporter: Reporter, config: 'ModuleConfig | None' = None):
 
         super().__init__(reporter, config)
         try:

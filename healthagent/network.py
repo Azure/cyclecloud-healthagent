@@ -5,6 +5,7 @@ from dataclasses import dataclass, fields
 from healthagent import healthcheck
 from healthagent.util import read_kernel_attrs, evaluate
 from healthagent.healthmodule import HealthModule
+from healthagent.config import NetworkConfig
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
 from healthagent.scheduler import Scheduler
 
@@ -62,8 +63,8 @@ class NetworkInterface:
 
 class NetworkHealthChecks(HealthModule):
 
-    def __init__(self, reporter: Reporter, config: dict | None = None):
-        super().__init__(reporter, config)
+    def __init__(self, reporter: Reporter, config: 'NetworkConfig | None' = None):
+        super().__init__(reporter, config or NetworkConfig())
 
     async def create(self):
         await self.reporter.clear_all_errors()

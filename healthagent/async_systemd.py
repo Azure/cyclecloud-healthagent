@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import systemd.journal
 from healthagent import healthcheck
 from healthagent.healthmodule import HealthModule
+from healthagent.config import SystemdConfig
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
 
@@ -20,8 +21,8 @@ class SystemdMonitor(HealthModule):
     documentation: https://www.freedesktop.org/wiki/Software/systemd/dbus/
     """
 
-    def __init__(self, reporter: Reporter, config: dict | None = None):
-        super().__init__(reporter, config)
+    def __init__(self, reporter: Reporter, config: 'SystemdConfig | None' = None):
+        super().__init__(reporter, config or SystemdConfig())
         self.state = dict()
         self.bus = None
         self.manager = None

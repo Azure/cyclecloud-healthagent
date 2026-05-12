@@ -1,5 +1,6 @@
 from abc import ABC
 from healthagent.reporter import Reporter
+from healthagent.config import ModuleConfig
 from healthagent import status
 import inspect
 import logging
@@ -17,9 +18,9 @@ class HealthModule(ABC):
 
     """
 
-    def __init__(self, reporter: Reporter, config: dict | None = None):
+    def __init__(self, reporter: Reporter, config: ModuleConfig | None = None):
         self.reporter = reporter
-        self.config = config if config is not None else {}
+        self.config = config if config is not None else ModuleConfig()
         self._handler_cache = {}
         self._checks_registry = None
 
