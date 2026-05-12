@@ -181,7 +181,7 @@ class Healthagent:
                 mod = importlib.import_module(import_path)
                 instance = getattr(mod, class_name)
                 reporter = cls.get_reporter(module=module_name)
-                module_config = getattr(cls.config, module_name, ModuleConfig()).model_dump()
+                module_config = getattr(cls.config, module_name, ModuleConfig())
                 instance_obj = instance(reporter=reporter, config=module_config)
                 await instance_obj.create()
                 log.info(f"Initialized module: {module_name}")

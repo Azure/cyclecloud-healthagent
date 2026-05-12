@@ -140,27 +140,28 @@ class TestLoadConfig:
 
 class TestHealthModuleConfig:
 
-    def test_config_defaults_to_empty_dict(self):
-        """When no config is passed, self.config is an empty dict."""
+    def test_config_defaults_to_module_config(self):
+        """When no config is passed, self.config is a default ModuleConfig."""
         class FakeModule(HealthModule):
             pass
         module = FakeModule(reporter=Reporter())
-        assert module.config == {}
+        assert module.config == ModuleConfig()
 
     def test_config_is_stored(self):
         """When config is passed, it's available as self.config."""
         class FakeModule(HealthModule):
             pass
-        test_config = {"temp": 83, "services": ["a", "b"]}
+        test_config = ModuleConfig(services=["a", "b"])
         module = FakeModule(reporter=Reporter(), config=test_config)
         assert module.config == test_config
+        assert module.config.services == ["a", "b"]
 
-    def test_config_none_becomes_empty_dict(self):
-        """Passing None explicitly results in empty dict."""
+    def test_config_none_becomes_module_config(self):
+        """Passing None explicitly results in default ModuleConfig."""
         class FakeModule(HealthModule):
             pass
         module = FakeModule(reporter=Reporter(), config=None)
-        assert module.config == {}
+        assert module.config == ModuleConfig()
 
 
 # ── Schema validation tests ─────────────────────────────────
