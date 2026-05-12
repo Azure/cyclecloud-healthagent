@@ -11,6 +11,7 @@ from healthagent.config import GpuConfig
 from healthagent.reporter import Reporter, HealthReport,HealthStatus
 from healthagent.util import evaluate
 from healthagent.bindings import *
+from healthagent.bindings import resolve_config_field_watches
 
 log = logging.getLogger('healthagent')
 
@@ -36,6 +37,14 @@ class GpuHealthChecks(HealthModule):
     def __init__(self, reporter: Reporter, config: 'GpuConfig | None' = None):
 
         super().__init__(reporter, config or GpuConfig())
+
+        # XID classification lists from config
+        self.xid_warning = set(self.config.xid.warning)
+        self.xid_ignore = set(self.config.xid.ignore)
+        self.xid_error = set(self.config.xid.error)
+
+        # Resolve field watches from config
+        self.field_watches = resolve_config_field_watches(self.config.field_watches)
 
         # TODO: Move this to config file
         self.test_mode = os.getenv('DCGM_TEST_MODE', 'false').lower() == 'true'
@@ -88,7 +97,7 @@ class GpuHealthChecks(HealthModule):
         with DCGM for polling.
         """
         system_fields = Wrap.get_fields()
-        watch_fields = [w["field_id"] for w in Wrap.default_field_watches]
+        watch_fields = [w["field_id"] for w in self.field_watches]
         all_fields = list(dict.fromkeys(system_fields + watch_fields))
         self.field_group = DcgmFieldGroup.DcgmFieldGroup(self.dcgmHandle, name="ccfield_group", fieldIds=all_fields)
         # UpdateFreq is in microseconds. So we are updating every 1 second.
@@ -151,18 +160,13 @@ class GpuHealthChecks(HealthModule):
             log.exception(e)
             return
 
-    # TODO: Adding all config file attributes as class objects for now.
-    XID_WARNING = [43, 63, 13, 31, 66, 94, 154]
-    XID_IGNORE = []
-    XID_ERROR = []
-
     @staticmethod
     def _gpu_entry():
         return {"errors": [], "warnings": [], "xid": []}
 
     def track_fieldsv2(self):
         """
-        Generic field watch evaluation driven by Wrap.default_field_watches.
+        Generic field watch evaluation driven by self.field_watches (from config).
         Iterates all entity groups returned by DCGM. GPU entities get per-GPU
         entries (GPU_0, GPU_1). Non-GPU entities report under 'overall'.
         XIDs are handled separately — GPU-only, not part of field watches.
@@ -192,7 +196,7 @@ class GpuHealthChecks(HealthModule):
                         entity_key = "overall"
                         custom_fields.setdefault(entity_key, {"errors": [], "warnings": []})
 
-                    for watch in Wrap.default_field_watches:
+                    for watch in self.field_watches:
                         samples = field_values.get(watch["field_id"])
                         if not samples or samples[0].isBlank:
                             continue
@@ -256,10 +260,13 @@ class GpuHealthChecks(HealthModule):
                 for entry in xids.values():
                     xid_num = entry["xid"]
                     timestamp = entry["timestamp"]
-                    if xid_num in self.XID_IGNORE:
+                    if xid_num in self.xid_ignore:
                         continue
                     msg = f"[{gpu_id}] XID {xid_num} at {timestamp}"
-                    if xid_num in self.XID_WARNING:
+                    if xid_num in self.xid_warning:
+                        custom_fields[gpu_id]['warnings'].append(msg)
+                    elif self.xid_error and xid_num not in self.xid_error:
+                        # Explicit error list provided: only those XIDs are errors
                         custom_fields[gpu_id]['warnings'].append(msg)
                     else:
                         custom_fields[gpu_id]['errors'].append(msg)

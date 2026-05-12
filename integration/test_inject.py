@@ -59,11 +59,11 @@ FI_CLOCKS_EVENT_REASONS      = 112
 FI_PERSISTENCE_MODE          = 65
 FI_ECC_DBE_VOL_TOTAL         = 311
 FI_ROW_REMAP_FAILURE         = 395
-FI_RETIRED_SBE               = 390
+FI_RETIRED_PENDING           = 392
 FI_FABRIC_MANAGER_STATUS     = 170
 FI_RECOVERY_ACTION           = 1523
-FI_ECC_SBE_AGG_TOTAL         = 312
 FI_PCIE_REPLAY_COUNTER       = 202
+FI_EFFECTIVE_BER_FLOAT       = 1218
 FI_FABRIC_HEALTH_MASK        = 174
 FI_XID_ERRORS                = 230
 
@@ -71,9 +71,9 @@ FI_XID_ERRORS                = 230
 # ── Test functions ─────────────────────────────────────────────
 
 def test_temperature(gpu_id, duration):
-    """Inject GPU temp 95°C — triggers gt error (> 90)."""
-    print(f"\n=== GPU {gpu_id}: Temperature (warning > 83, error > 90) ===")
-    inject_loop(gpu_id, FI_GPU_TEMP, 95, duration, "GPU_TEMP (error)")
+    """Inject GPU temp 95°C — triggers gt warning (> 93)."""
+    print(f"\n=== GPU {gpu_id}: Temperature (warning > 93) ===")
+    inject_loop(gpu_id, FI_GPU_TEMP, 95, duration, "GPU_TEMP (warning)")
 
 
 def test_clocks(gpu_id, duration):
@@ -106,10 +106,10 @@ def test_row_remap(gpu_id, duration):
     inject_loop(gpu_id, FI_ROW_REMAP_FAILURE, 1, duration, "ROW_REMAP_FAILURE")
 
 
-def test_retired_sbe(gpu_id, duration):
-    """Inject retired SBE pages = 65 — triggers gt error (> 63)."""
-    print(f"\n=== GPU {gpu_id}: Retired SBE pages (warning > 50, error > 63) ===")
-    inject_loop(gpu_id, FI_RETIRED_SBE, 65, duration, "RETIRED_SBE (error)")
+def test_retired_pending(gpu_id, duration):
+    """Inject retired pending pages = 1 — triggers gt warning (> 0)."""
+    print(f"\n=== GPU {gpu_id}: Retired pending pages (warning > 0) ===")
+    inject_loop(gpu_id, FI_RETIRED_PENDING, 1, duration, "RETIRED_PENDING (warning)")
 
 
 def test_fabric_status(gpu_id, duration):
@@ -134,16 +134,16 @@ def test_fabric_health(gpu_id, duration):
     inject_loop(gpu_id, FI_FABRIC_HEALTH_MASK, 0x19A, duration, "FABRIC_HEALTH_MASK (route_unhealthy)")
 
 
+def test_ber(gpu_id, duration):
+    """Inject effective BER float = 1e-5 — triggers gt warning (> 1e-6)."""
+    print(f"\n=== GPU {gpu_id}: Effective BER (warning > 1e-6) ===")
+    inject_loop(gpu_id, FI_EFFECTIVE_BER_FLOAT, 1e-5, duration, "EFFECTIVE_BER_FLOAT (warning)")
+
+
 def test_recovery_action(gpu_id, duration):
     """Inject recovery action = 3 (GPU_RESET) — triggers in [3, 4] error."""
     print(f"\n=== GPU {gpu_id}: Recovery action (warning [2], error [3, 4]) ===")
     inject_loop(gpu_id, FI_RECOVERY_ACTION, 3, duration, "RECOVERY_ACTION (GPU_RESET)")
-
-
-def test_sbe_rate(gpu_id, duration):
-    """Inject high SBE aggregate counter — triggers delta_gt."""
-    print(f"\n=== GPU {gpu_id}: SBE aggregate rate (delta_gt warning > 100/min) ===")
-    inject_loop(gpu_id, FI_ECC_SBE_AGG_TOTAL, 99999, duration, "SBE_AGG_TOTAL")
 
 
 def test_xid(gpu_id, duration):
@@ -162,11 +162,11 @@ def test_clear(gpu_id, duration):
         (FI_PERSISTENCE_MODE, 1, "PERSISTENCE_MODE"),
         (FI_ECC_DBE_VOL_TOTAL, 0, "DBE_VOL_TOTAL"),
         (FI_ROW_REMAP_FAILURE, 0, "ROW_REMAP_FAILURE"),
-        (FI_RETIRED_SBE, 0, "RETIRED_SBE"),
+        (FI_RETIRED_PENDING, 0, "RETIRED_PENDING"),
         (FI_FABRIC_MANAGER_STATUS, 3, "FABRIC_STATUS (success)"),
         (FI_FABRIC_HEALTH_MASK, 0x1AA, "FABRIC_HEALTH_MASK (healthy)"),
         (FI_RECOVERY_ACTION, 0, "RECOVERY_ACTION"),
-        (FI_ECC_SBE_AGG_TOTAL, 0, "SBE_AGG_TOTAL"),
+        (FI_EFFECTIVE_BER_FLOAT, 0.0, "EFFECTIVE_BER_FLOAT"),
         (FI_PCIE_REPLAY_COUNTER, 0, "PCIE_REPLAY_COUNTER"),
         (FI_XID_ERRORS, 0, "XID_ERRORS"),
     ]
@@ -184,11 +184,11 @@ TESTS = {
     "persist":  test_persistence_mode,
     "dbe":      test_dbe,
     "remap":    test_row_remap,
-    "sbe":      test_retired_sbe,
+    "pending":  test_retired_pending,
+    "ber":      test_ber,
     "fabric":   test_fabric_status,
     "fabric_health": test_fabric_health,
     "recovery": test_recovery_action,
-    "sberate":  test_sbe_rate,
     "xid":      test_xid,
     "clear":    test_clear,
 }

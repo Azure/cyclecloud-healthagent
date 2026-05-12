@@ -78,8 +78,7 @@ gpu:
   field_watches:
     DCGM_FI_DEV_GPU_TEMP:
       eval: gt
-      warning: 83
-      error: 90
+      warning: 93
       category: Thermal
       msg: "GPU {gpu} temperature {value}°C exceeds {threshold}°C"
     DCGM_FI_DEV_CLOCKS_EVENT_REASONS:
@@ -103,22 +102,21 @@ gpu:
       error: 0
       category: Memory
       msg: "GPU {gpu} row remap failure detected"
+    DCGM_FI_DEV_RETIRED_PENDING:
+      eval: gt
+      warning: 0
+      category: Memory
+      msg: "GPU {gpu} has pages pending retirement (reboot recommended)"
     DCGM_FI_DEV_ECC_DBE_VOL_TOTAL:
       eval: gt
       error: 0
       category: Memory
       msg: "GPU {gpu} volatile DBE errors detected: {value}"
-    DCGM_FI_DEV_RETIRED_SBE:
+    DCGM_FI_DEV_NVLINK_COUNT_EFFECTIVE_BER_FLOAT:
       eval: gt
-      warning: 50
-      error: 63
-      category: Memory
-      msg: "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"
-    DCGM_FI_DEV_ECC_SBE_AGG_TOTAL:
-      eval: delta_gt
-      warning: 100
-      category: Memory
-      msg: "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"
+      warning: 1.0e-6
+      category: NVLink
+      msg: "GPU {gpu} NVLink effective BER {value:.2e} exceeds {threshold:.2e}"
     DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
       eval: delta_gt
       warning: 50

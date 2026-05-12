@@ -101,35 +101,34 @@ for _alias, _dcgm_name in _SYSTEM_FIELDS:
     if _field_id is not None:
         _Fields.avail_field_ids.append(_field_id)
 
-# Default field watches — built-in thresholds for health evaluation.
-# Same shape as future YAML config. Each entry is one watch:
-#   field:    DCGM field constant name (string)
-#   eval:     evaluation type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt)
-#   warning:  threshold for warning severity (number or list for 'in'; omit if not needed)
-#   error:    threshold for error severity (number or list for 'in'; omit if not needed)
-#   category: reporting category string
-#   message:  template with {gpu}, {value}, {threshold} placeholders
-#   window:   (optional) rate normalization window in seconds for delta_gt (default: 60, max: 300)
-_FIELD_WATCHES = [
-    {"field": "DCGM_FI_DEV_GPU_TEMP",               "eval": "gt",       "warning": 83, "error": 90, "category": "Thermal",        "message": "GPU {gpu} temperature {value}\u00b0C exceeds {threshold}\u00b0C"},
-    {"field": "DCGM_FI_DEV_CLOCKS_EVENT_REASONS",   "eval": "bitmask",                 "error": 0xE8, "category": "Clocks",       "message": "GPU {gpu} clock throttle reasons active: {value:#x} (mask: {threshold:#x})"},
-    {"field": "DCGM_FI_DEV_PERSISTENCE_MODE",        "eval": "ne",                     "error": 1,    "category": "System",        "message": "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."},
-    {"field": "DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION", "eval": "in",  "warning": [2],    "error": [3, 4], "category": "System",      "message": "GPU {gpu} recovery action requested (action: {value})"},
-    {"field": "DCGM_FI_DEV_ROW_REMAP_FAILURE",       "eval": "ne",                     "error": 0,    "category": "Memory",        "message": "GPU {gpu} row remap failure detected"},
-    {"field": "DCGM_FI_DEV_ECC_DBE_VOL_TOTAL",       "eval": "gt",                     "error": 0,    "category": "Memory",        "message": "GPU {gpu} volatile DBE errors detected: {value}"},
-    {"field": "DCGM_FI_DEV_RETIRED_SBE",             "eval": "gt",       "warning": 50, "error": 63, "category": "Memory",        "message": "GPU {gpu} retired SBE pages: {value} (threshold: {threshold})"},
-    {"field": "DCGM_FI_DEV_ECC_SBE_AGG_TOTAL",       "eval": "delta_gt", "warning": 100,              "category": "Memory",        "message": "GPU {gpu} SBE rate {value:.0f}/min exceeds {threshold}/min"},
-    {"field": "DCGM_FI_DEV_PCIE_REPLAY_COUNTER",     "eval": "delta_gt", "warning": 50, "error": 200, "category": "PCIe",         "message": "GPU {gpu} PCIe replay rate {value:.0f}/min exceeds {threshold}/min"},
-]
+def resolve_config_field_watches(config_watches: dict) -> list:
+    """Convert config field_watches dict into resolved runtime list.
 
-def resolve_field_watches(watches):
-    """Resolve field name strings to DCGM field IDs.
-    Skips watches with unknown fields (forward-compatibility)."""
+    Config format (from defaults.yaml / user overrides)::
+
+        {"DCGM_FI_DEV_GPU_TEMP": ThresholdCheck(eval="gt", warning=83, msg="...", category="Thermal"), ...}
+
+    Runtime format (used by track_fieldsv2)::
+
+        [{"field": "DCGM_FI_DEV_GPU_TEMP", "field_id": 203, "eval": "gt",
+          "warning": 83, "message": "...", "category": "Thermal"}, ...]
+
+    Skips fields not found in dcgm_fields (forward-compatibility).
+    """
     resolved = []
-    for watch in watches:
-        field_id = getattr(dcgm_fields, watch["field"], None)
-        if field_id is not None:
-            resolved.append({**watch, "field_id": field_id})
+    for field_name, watch_cfg in config_watches.items():
+        field_id = getattr(dcgm_fields, field_name, None)
+        if field_id is None:
+            continue
+        watch_dict = watch_cfg.model_dump(exclude_none=True)
+        entry = {"field": field_name, "field_id": field_id}
+        for key, val in watch_dict.items():
+            # Config uses 'msg'; runtime uses 'message'
+            if key == "msg":
+                entry["message"] = val
+            else:
+                entry[key] = val
+        resolved.append(entry)
     return resolved
 
 class Wrap:
@@ -144,7 +143,6 @@ class Wrap:
         pass
 
     fields = _Fields
-    default_field_watches = resolve_field_watches(_FIELD_WATCHES)
 
     ENTITY_GROUP_NAMES = {
         dcgm_fields.DCGM_FE_NONE: "None",
