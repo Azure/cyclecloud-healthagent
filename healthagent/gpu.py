@@ -121,17 +121,40 @@ class GpuHealthChecks(HealthModule):
             log.debug("Power Limit : %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mPowerLimit.val)))
             log.debug("Compute Mode: %s" % (Wrap.convert_value_to_string(self.gpu_config[x].mComputeMode)))
 
-    @healthcheck("GpuCountCheck", description="Check OS vs PCI GPU count")
-    @Scheduler.periodic(120)
+    @healthcheck("GpuCountCheck", description="Check OS vs PCI vs NVML GPU count")
+    @Scheduler.periodic(60)
     async def gpu_count_check(self):
 
         report = HealthReport()
+        custom_fields = {}
         pci_gpu_count = Wrap.count_pci_gpu_devices()
         os_gpu_count = Wrap.count_os_gpu_devices()
-        if os_gpu_count != pci_gpu_count:
+
+        # Read DCGM_FI_DEV_COUNT from the latest field collection
+        dcgm_gpu_count = None
+        devcnt_field_id = Wrap.fields.DEVCNT
+        if devcnt_field_id is not None:
+            try:
+                gpu_entities = self._field_collection.values.get(dcgm_fields.DCGM_FE_GPU, {})
+                for entity_id, field_values in gpu_entities.items():
+                    samples = field_values.get(devcnt_field_id)
+                    if samples and not samples[-1].isBlank:
+                        dcgm_gpu_count = samples[-1].value
+                        break
+            except Exception as e:
+                log.warning(f"Failed to read DCGM_FI_DEV_COUNT: {e}")
+
+        custom_fields = {"os_count": os_gpu_count, "pci_device_count": pci_gpu_count}
+        if dcgm_gpu_count is not None:
+            custom_fields["nvml_count"] = dcgm_gpu_count
+
+        unique_counts = set(custom_fields.values())
+        if len(unique_counts) > 1:
             report.status = HealthStatus.ERROR
-            report.details = f"OS shows {os_gpu_count} GPU devices, PCI Bus shows {pci_gpu_count} GPU devices"
+            detail_parts = [f"{source} shows {count}" for source, count in custom_fields.items()]
+            report.details = "GPU count mismatch: " + ", ".join(detail_parts)
             report.description = "GPU Count Mismatch"
+            report.custom_fields = custom_fields
         await self.reporter.update_report(name=self.gpu_count_check.report_name, report=report)
 
     async def create(self):

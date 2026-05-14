@@ -80,7 +80,7 @@ def _resolve_error_codes_with_notes(*pairs):
 # (alias, dcgm_fields attribute name)
 _SYSTEM_FIELDS = [
     # Dev count — used by gpu_count_check
-    ("DEVCNT",           "DCGM_FI_DEV_CNT"),
+    ("DEVCNT",           "DCGM_FI_DEV_COUNT"),
     # Reference temps — used by __display_gpu_config / telemetry
     ("GPUTEMP_SLOWDOWN", "DCGM_FI_DEV_SLOWDOWN_TEMP"),
     ("GPUTEMP_SHUTDOWN",  "DCGM_FI_DEV_SHUTDOWN_TEMP"),
