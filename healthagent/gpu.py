@@ -171,7 +171,7 @@ class GpuHealthChecks(HealthModule):
         entries (GPU_0, GPU_1). Non-GPU entities report under 'overall'.
         XIDs are handled separately — GPU-only, not part of field watches.
         """
-        custom_fields = {'error_count': 0, 'category': set()}
+        custom_fields = {'error_count': 0, 'warning_count': 0, 'category': set()}
         try:
             # Accumulate new samples since last call
             self._field_collection = self.dcgmGroup.samples.GetAllSinceLastCall_v2(
@@ -239,6 +239,8 @@ class GpuHealthChecks(HealthModule):
                         custom_fields[entity_key]["errors" if severity == "error" else "warnings"].append(msg)
                         if severity == "error":
                             custom_fields['error_count'] += 1
+                        else:
+                            custom_fields['warning_count'] += 1
                         custom_fields['category'].add(watch["category"])
 
                     # XID handling — GPU entities only
@@ -265,9 +267,11 @@ class GpuHealthChecks(HealthModule):
                     msg = f"[{gpu_id}] XID {xid_num} at {timestamp}"
                     if xid_num in self.xid_warning:
                         custom_fields[gpu_id]['warnings'].append(msg)
+                        custom_fields['warning_count'] += 1
                     elif self.xid_error and xid_num not in self.xid_error:
                         # Explicit error list provided: only those XIDs are errors
                         custom_fields[gpu_id]['warnings'].append(msg)
+                        custom_fields['warning_count'] += 1
                     else:
                         custom_fields[gpu_id]['errors'].append(msg)
                         custom_fields['error_count'] += 1
@@ -318,17 +322,14 @@ class GpuHealthChecks(HealthModule):
         response[health_system] = report.view()
         return response
 
-    DIAG_DEFAULTS = {
-        "prolog": {"tests": "short", "params": ""},
-        "epilog": {"tests": "medium", "params": ""},
-    }
     @healthcheck("GpuDiagnosticCheck", description="Run DCGM diagnostics checks. Eg. Args: gpu_id=0,1 tests=memory", args=['gpu_id','tests', 'params'])
     @epilog
     @prolog
     async def run_diag(self, gpu_id: list = None, tests: str = '', params: str = '', _phase: str = None):
-        phase_defaults = self.DIAG_DEFAULTS.get(_phase, {})
-        tests = tests or phase_defaults.get("tests", "")
-        params = params or phase_defaults.get("params", "")
+        diag_cfg = self.config.gpudiagnosticcheck
+        phase_cfg = getattr(diag_cfg, _phase, None) if _phase else None
+        tests = tests or (phase_cfg.tests if phase_cfg else "")
+        params = params or (phase_cfg.params if phase_cfg else "")
         health_system = self.run_diag.report_name
         report = await Scheduler.add_task(run_active_healthchecksv2, gpu_id=gpu_id, tests=tests, params=params)
         await self.reporter.update_report(name=health_system, report=report)
@@ -359,6 +360,8 @@ class GpuHealthChecks(HealthModule):
                 custom_fields = self.track_fieldsv2()
                 if custom_fields.get('error_count', 0) > 0:
                     report.escalate(HealthStatus.ERROR)
+                if custom_fields.get('warning_count', 0) > 0:
+                    report.escalate(HealthStatus.WARNING)
 
                 for index in range (0, incident_count):
                     entity_id = group_health.incidents[index].entityInfo.entityId
@@ -374,6 +377,7 @@ class GpuHealthChecks(HealthModule):
                     if error_code in Wrap.HEALTH_WARNINGS:
                         custom_fields[entity]['warnings'].append(group_health.incidents[index].error.msg)
                         report.escalate(HealthStatus.WARNING)
+                        custom_fields['warning_count'] += 1
                         subsystems.add(system)
                     elif error_code in Wrap.HEALTH_ERRORS:
                         report.escalate(HealthStatus.ERROR)
@@ -391,11 +395,11 @@ class GpuHealthChecks(HealthModule):
                     if not isinstance(v, dict) or any(v.values())
                 }
 
-                if custom_fields['error_count'] == 0:
+                if custom_fields['error_count'] == 0 and custom_fields['warning_count'] == 0:
                     await self.reporter.update_report(name=health_system, report=report)
                     return
 
-                description = f"{health_system} report {custom_fields['error_count']} errors of type {', '.join(custom_fields['category'])}"
+                description = f"{health_system} report {custom_fields['error_count']} errors, {custom_fields['warning_count']} warnings of type {', '.join(custom_fields['category'])}"
                 report.description = description
 
                 all_errors = []
@@ -517,9 +521,9 @@ def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str 
         custom_fields['error_count'] += 1
         custom_fields.setdefault('overall', _diag_entry())
         custom_fields['overall']['errors'].append(str(e))
+        report.escalate(HealthStatus.ERROR)
 
     if response and response.numErrors > 0:
-        isHealthy = False
         for errIdx in range(response.numErrors):
             curErr = response.errors[errIdx]
             error_msg = curErr.msg
@@ -530,10 +534,12 @@ def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str 
                 entity_id = "overall"
             custom_fields.setdefault(entity_id, _diag_entry())
             if error_code in Wrap.DIAG_ERRORS:
+                isHealthy = False
                 custom_fields[entity_id]['errors'].append(error_msg)
                 custom_fields['error_count'] += 1
                 report.escalate(HealthStatus.ERROR)
             elif error_code in Wrap.DIAG_WARNINGS:
+                isHealthy = False
                 note = Wrap.DIAG_WARNINGS[error_code]
                 custom_fields[entity_id]['warnings'].append({"msg": error_msg, "note": note})
                 report.escalate(HealthStatus.WARNING)
@@ -542,8 +548,7 @@ def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str 
             else:
                 custom_fields[entity_id]['suppressed'].append({"msg": error_msg, "note": Wrap.DIAG_SUPPRESSED_NOTE})
     if not isHealthy:
-        report.description = "Active Diagnostic test failures"
-        report.message = "GPU Epilog Errors"
+        report.description = "GPU Diagnostic test errors"
         report.custom_fields = custom_fields
 
         all_errors = []

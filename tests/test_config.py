@@ -87,19 +87,19 @@ class TestLoadConfig:
 
     def test_loads_defaults_only(self, tmp_path):
         """When no config.yaml exists, returns packaged defaults as HealthagentConfig."""
-        defaults = {"modules": ["gpu", "network"], "gpu": {"max_keep_samples": 200}}
+        defaults = {"modules": ["gpu", "network"], "gpu": {"xid": {"warning": [43]}}}
 
         with patch("healthagent.config._load_packaged_defaults", return_value=defaults):
             config = load_config(config_path=str(tmp_path / "nonexistent.yaml"))
 
         assert isinstance(config, HealthagentConfig)
         assert config.modules == [ModuleName.GPU, ModuleName.NETWORK]
-        assert config.gpu.max_keep_samples == 200
+        assert config.gpu.xid.warning == [43]
 
     def test_merges_overrides(self, tmp_path):
         """User config.yaml overrides are merged into packaged defaults."""
-        defaults = {"modules": ["gpu", "network"], "gpu": {"max_keep_samples": 300}}
-        overrides = {"gpu": {"max_keep_samples": 150}}
+        defaults = {"modules": ["gpu", "network"], "gpu": {"xid": {"warning": [43, 63]}}}
+        overrides = {"gpu": {"xid": {"warning": [99]}}}
 
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump(overrides))
@@ -107,7 +107,7 @@ class TestLoadConfig:
         with patch("healthagent.config._load_packaged_defaults", return_value=defaults):
             config = load_config(config_path=str(config_file))
 
-        assert config.gpu.max_keep_samples == 150
+        assert config.gpu.xid.warning == [99]
         assert config.modules == [ModuleName.GPU, ModuleName.NETWORK]
 
     def test_null_override_removes_key(self, tmp_path):
@@ -133,7 +133,7 @@ class TestLoadConfig:
 
         assert isinstance(config, HealthagentConfig)
         assert len(config.modules) > 0
-        assert config.gpu.max_keep_samples == 300
+        assert config.gpu.gpudiagnosticcheck.prolog.tests == "short"
 
 
 # ── HealthModule config injection tests ─────────────────────
@@ -197,10 +197,10 @@ class TestSchemaValidation:
                 "network": {"infiniband": {"state": {"eval": "gt", "typo_field": 1}}}
             })
 
-    def test_bad_max_keep_samples_type(self):
-        """gpu.max_keep_samples must be int."""
+    def test_bad_xid_warning_element_type(self):
+        """gpu.xid.warning must be list of ints."""
         with pytest.raises(ValidationError):
-            HealthagentConfig.model_validate({"gpu": {"max_keep_samples": "not_int"}})
+            HealthagentConfig.model_validate({"gpu": {"xid": {"warning": ["not_int"]}}})
 
     def test_bad_services_element_type(self):
         """services list must contain strings."""
@@ -230,9 +230,9 @@ class TestSchemaValidation:
         """model_dump produces a dict that can be re-validated."""
         config = HealthagentConfig.model_validate({
             "modules": ["gpu", "network"],
-            "gpu": {"max_keep_samples": 500},
+            "gpu": {"xid": {"warning": [43, 63]}},
         })
         dumped = config.model_dump()
         reloaded = HealthagentConfig.model_validate(dumped)
-        assert reloaded.gpu.max_keep_samples == 500
+        assert reloaded.gpu.xid.warning == [43, 63]
         assert reloaded.modules == [ModuleName.GPU, ModuleName.NETWORK]

@@ -55,9 +55,6 @@ gpu:
     - nvidia-imex.service
     - nvidia-dcgm.service
     - nvidia-persistenced.service
-
-  max_keep_samples: 300
-
   # By default all XIDS are treated as error.
   # XIDS in warning list are downgraded to warning.
   # If error list is explicitly specified, then only
@@ -67,7 +64,9 @@ gpu:
     ignore: []
     error: []
 
-  diagnostics:
+
+
+  gpudiagnosticcheck:
     prolog:
       tests: short
       params: ""

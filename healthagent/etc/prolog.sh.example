@@ -4,7 +4,7 @@
 ## Running healthagent prolog tests.
 
 response=$(/usr/bin/health -p -c gpumemorycheck gpu_id=$SLURM_JOB_GPUS -c gpudiagnosticcheck gpu_id=$SLURM_JOB_GPUS)
-sum=$(echo $response | jq '[.gpu | to_entries[] | select(.value.status == "Error") | .value.error_count // 0] | add')
+sum=$(echo $response | jq '[.gpu | to_entries[] | select(.value.status == "Error") | .value.error_count // 1] | add')
 if [[ $sum -ge 1 ]] ; then
     exit $sum
 else
