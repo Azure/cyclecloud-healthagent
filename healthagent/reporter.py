@@ -219,6 +219,7 @@ class Reporter:
         last_report = self.store.get(name)
         if not last_report or (last_report != report):
             self.store[name] = copy.deepcopy(report)
+            log.info(f"Updated health report for {name}: {report.view()}")
             await self.publish_cc_status(name)
         else:
             # aux_data is excluded from equality (InitVar), so always copy it
@@ -232,7 +233,7 @@ class Reporter:
         if not self.publish_cc:
             return
         report = self.store.get(name)
-        log.debug(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
+        log.info(f"Setting jetpack node condition, Name: {name}, Status: {report.status}")
 
         # Build the command arguments
         args = [self.jetpack, 'condition', 'set', '-n', name, '-s', report.status.value]
