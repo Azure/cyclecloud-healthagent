@@ -25,7 +25,6 @@ class EvalType(StrEnum):
     NE = "ne"
     IN = "in"
     BITMASK = "bitmask"
-    DELTA_GT = "delta_gt"
     WINDOW_GT = "window_gt"
 
 

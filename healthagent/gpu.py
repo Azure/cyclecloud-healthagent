@@ -16,7 +16,6 @@ from healthagent.bindings import resolve_config_field_watches
 log = logging.getLogger('healthagent')
 
 # Maximum number of samples to retain per field per entity.
-# At 1s polling, 300 = 5-minute window for delta_gt rate computation.
 MAX_KEEP_SAMPLES = 300
 
 # Field-specific enrichments: map field ID -> callable(raw_value, field_values) -> list[str].
@@ -224,8 +223,7 @@ class GpuHealthChecks(HealthModule):
                         if not samples or samples[0].isBlank:
                             continue
 
-                        newest, oldest = samples[-1], samples[0]
-                        #log.debug(f"Field {watch['field']} entity {entity_id}: {len(samples)} samples, oldest={oldest.value} ts={oldest.ts}, newest={newest.value} ts={newest.ts}")
+                        newest = samples[-1]
                         severity = None
                         threshold_used = None
                         evaluated = None
@@ -235,10 +233,6 @@ class GpuHealthChecks(HealthModule):
                                 continue
                             triggered, evaluated = evaluate(
                                 watch["eval"], newest.value, thresh,
-                                prev_value=oldest.value,
-                                prev_time=oldest.ts / 1_000_000,
-                                current_time=newest.ts / 1_000_000,
-                                window=watch.get("window", 60),
                             )
                             if triggered:
                                 severity = level

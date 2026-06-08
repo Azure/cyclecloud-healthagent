@@ -182,24 +182,19 @@ class TimeSeries:
         return len(self._samples)
 
 
-def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
-             current_time=None, window=60, samples: TimeSeries = None):
+def evaluate(eval_type, value, threshold, *, window=60, samples: TimeSeries = None):
     """Unified threshold evaluation. Returns (triggered: bool, evaluated_value).
 
-    For delta_gt, evaluated_value is the computed rate per window.
     For window_gt, evaluated_value is the delta within the time window.
     For bitmask, evaluated_value is the matching bits (value & threshold).
     For all others, evaluated_value is the input value.
 
     Args:
-        eval_type: Comparison type (gt, lt, ge, le, eq, ne, in, bitmask, delta_gt, window_gt)
+        eval_type: Comparison type (gt, lt, ge, le, eq, ne, in, bitmask, window_gt)
         value: Current value to evaluate
         threshold: Threshold to compare against (list for 'in' eval type)
-        prev_value: Previous sample value (delta_gt only)
-        prev_time: Previous sample timestamp in monotonic seconds (delta_gt only)
-        current_time: Current sample timestamp in monotonic seconds (delta_gt only)
-        window: Time window in seconds (delta_gt: rate normalization, window_gt: sliding window size)
-        samples: TimeSeries instance for recording and windowed evaluation (window_gt only)
+        window: Time window in seconds for window_gt sliding window size (default: 60)
+        samples: TimeSeries instance for windowed evaluation (window_gt only)
     """
     eval_type = str(eval_type).strip().lower()
 
@@ -220,17 +215,6 @@ def evaluate(eval_type, value, threshold, *, prev_value=None, prev_time=None,
     elif eval_type == "bitmask":
         matched = operator.index(value) & operator.index(threshold)
         return matched != 0, matched
-    elif eval_type == "delta_gt":
-        if prev_value is None or prev_time is None or current_time is None:
-            return False, 0.0
-        delta = value - prev_value
-        if delta < 0:
-            return False, 0.0
-        elapsed = current_time - prev_time
-        if elapsed <= 0:
-            return False, 0.0
-        rate = (delta * window) / elapsed
-        return rate > threshold, rate
     elif eval_type == "window_gt":
         if samples is None:
             return False, 0
