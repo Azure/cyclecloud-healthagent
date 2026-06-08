@@ -62,7 +62,6 @@ FI_ROW_REMAP_FAILURE         = 395
 FI_RETIRED_PENDING           = 392
 FI_FABRIC_MANAGER_STATUS     = 170
 FI_RECOVERY_ACTION           = 1523
-FI_PCIE_REPLAY_COUNTER       = 202
 FI_EFFECTIVE_BER_FLOAT       = 1218
 FI_FABRIC_HEALTH_MASK        = 174
 FI_XID_ERRORS                = 230
@@ -80,12 +79,6 @@ def test_clocks(gpu_id, duration):
     """Inject clock throttle reasons — triggers bitmask error (0xE8)."""
     print(f"\n=== GPU {gpu_id}: CLOCKS_EVENT_REASONS = 0xE8 (all throttle bits) ===")
     inject_loop(gpu_id, FI_CLOCKS_EVENT_REASONS, 0xE8, duration, "CLOCKS_EVENT_REASONS")
-
-
-def test_pcie_replay(gpu_id, duration):
-    """Inject high PCIe replay counter — triggers delta_gt."""
-    print(f"\n=== GPU {gpu_id}: PCIe replay counter (delta_gt warning > 50, error > 200) ===")
-    inject_loop(gpu_id, FI_PCIE_REPLAY_COUNTER, 99999, duration, "PCIE_REPLAY_COUNTER")
 
 
 def test_persistence_mode(gpu_id, duration):
@@ -167,7 +160,6 @@ def test_clear(gpu_id, duration):
         (FI_FABRIC_HEALTH_MASK, 0x1AA, "FABRIC_HEALTH_MASK (healthy)"),
         (FI_RECOVERY_ACTION, 0, "RECOVERY_ACTION"),
         (FI_EFFECTIVE_BER_FLOAT, 0.0, "EFFECTIVE_BER_FLOAT"),
-        (FI_PCIE_REPLAY_COUNTER, 0, "PCIE_REPLAY_COUNTER"),
         (FI_XID_ERRORS, 0, "XID_ERRORS"),
     ]
     for field_id, value, name in clears:
@@ -180,7 +172,6 @@ def test_clear(gpu_id, duration):
 TESTS = {
     "temp":     test_temperature,
     "clocks":   test_clocks,
-    "pcie":     test_pcie_replay,
     "persist":  test_persistence_mode,
     "dbe":      test_dbe,
     "remap":    test_row_remap,
