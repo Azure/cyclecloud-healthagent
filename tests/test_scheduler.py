@@ -62,6 +62,16 @@ def on_demand_task(sleep_t: int = 1):
     return sleep_t
 
 @Scheduler.pool
+def on_demand_timed_task(sleep_t: float = 1):
+
+    # Record wall-clock start/end so the parent can verify pool tasks
+    # do not overlap (i.e. they are serialized by _pool_lock).
+    start = time()
+    sleep(sleep_t)
+    end = time()
+    return (start, end)
+
+@Scheduler.pool
 def on_demand_task_kwargs(value: int = 1, multiplier: int = 1):
 
     return value * multiplier
@@ -138,6 +148,26 @@ async def test_pool_kwargs():
     rc = await Scheduler.add_task(on_demand_task_kwargs, value=5, multiplier=3)
     assert rc == 15
     Scheduler.stop()
+
+
+async def test_pool_serialized():
+    """
+    Tests that concurrently scheduled @Scheduler.pool tasks are serialized by
+    _pool_lock and do not overlap, even though each runs in its own process.
+    """
+
+    Scheduler.start()
+    # Schedule two pool tasks at the same time. Each blocks for 2 seconds and
+    # reports its own wall-clock start/end timestamps.
+    t1 = Scheduler.add_task(on_demand_timed_task, 2)
+    t2 = Scheduler.add_task(on_demand_timed_task, 2)
+    (start1, end1), (start2, end2) = await asyncio.gather(t1, t2)
+    Scheduler.stop()
+
+    # Order the two runs by start time and assert the second starts only after
+    # the first finishes (no overlap).
+    first, second = sorted([(start1, end1), (start2, end2)])
+    assert second[0] >= first[1]
 
 
 async def test_on_demand():

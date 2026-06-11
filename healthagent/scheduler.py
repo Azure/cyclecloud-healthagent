@@ -13,6 +13,7 @@ class Scheduler:
     """
     stop_event = None
     _pool = None
+    _pool_lock = None
 
     @staticmethod
     def pool(func):
@@ -87,6 +88,22 @@ class Scheduler:
         self.cancel_event.set()
 
     @classmethod
+    async def _run_pool_task(self, function, *args, **kwargs):
+        """Run a pool task under _pool_lock to serialize DCGM diagnostics."""
+        async with self._pool_lock:
+            loop = asyncio.get_running_loop()
+            pool = ProcessPoolExecutor(
+                max_workers=1,
+                mp_context=multiprocessing.get_context("spawn")
+            )
+            try:
+                return await loop.run_in_executor(pool, functools.partial(function, *args, **kwargs))
+            finally:
+                # Offload the (potentially blocking) shutdown to a thread and shield
+                # it from cancellation so the pool is always cleaned up.
+                await asyncio.shield(loop.run_in_executor(None, pool.shutdown, True))
+
+    @classmethod
     def add_task(self, function, *args, **kwargs):
         """
         Add an on-demand task to be run at the time defined by when,
@@ -100,19 +117,7 @@ class Scheduler:
         if not pool:
             return asyncio.create_task(self.__task_wrapper(interval, function, *args, **kwargs))
         else:
-            loop = asyncio.get_running_loop()
-            pool = ProcessPoolExecutor(
-                max_workers=1,
-                mp_context=multiprocessing.get_context("spawn")
-            )
-            future = loop.run_in_executor(pool, functools.partial(function, *args, **kwargs))
-
-            # Clean up pool once future is done
-            def shutdown_pool(_):
-                pool.shutdown(wait=True)
-
-            future.add_done_callback(shutdown_pool)
-            return future
+            return asyncio.create_task(self._run_pool_task(function, *args, **kwargs))
 
     def subprocess(*sp_args, **sp_kwargs):
         # Set defaults only if not already specified
@@ -135,6 +140,7 @@ class Scheduler:
     def start(self):
         self.stop_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
+        self._pool_lock = asyncio.Lock()
         self.stop_event.clear()
 
     @classmethod
