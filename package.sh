@@ -4,6 +4,69 @@
 set -e
 
 log_file=".build.log"
+MODE="NON-PRODUCTION"
+PROD=false
+PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cd "$PROJECT_DIR"
+
+usage() {
+  cat <<EOF
+Usage: ./package.sh [--prod|-p]
+
+Build healthagent package artifacts.
+
+Options:
+  -p, --prod   Build in PRODUCTION mode using a fresh .prod_venv and a clean git tree
+  -h, --help   Show this help message
+EOF
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    -p|--prod)
+      PROD=true
+      MODE="PRODUCTION"
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $arg" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+python_is_supported() {
+  "$1" - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+}
+
+python_version() {
+  "$1" - <<'PY'
+import sys
+print(f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}")
+PY
+}
+
+find_python() {
+  local candidates=(python3.20 python3.19 python3.18 python3.17 python3.16 python3.15 python3.14 python3.13 python3.12 python3.11 python3)
+  local candidate
+
+  for candidate in "${candidates[@]}"; do
+    if command -v "$candidate" >/dev/null 2>&1 && python_is_supported "$candidate"; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+
+  return 1
+}
+
 check_dirty_changes() {
   if [ -n "$(git status --porcelain)" ]; then
     echo "Error: There are uncommitted changes in the current branch. Please commit or stash them before running this script."
@@ -59,34 +122,64 @@ get_version_from_project_ini() {
 
 
 build() {
-    delete_existing_blobs
-    # Define the project directory
-    PROJECT_DIR=$(dirname "$0")
-    # Create a virtual environment
-    VENV_DIR="$PROJECT_DIR/.venv"
-    # Create a virtual environment if it does not exist
-    if [ ! -d "$VENV_DIR" ]; then
-        echo "Creating virtual environment at $VENV_DIR..."
-        python3 -m venv "$VENV_DIR"
-    else
-        echo "Virtual environment already exists at $VENV_DIR"
+  delete_existing_blobs
+
+  PYTHON_BIN=$(find_python) || {
+    echo "Error: Could not find Python 3.11 or newer on PATH." >&2
+    exit 1
+  }
+  echo "Using Python: $PYTHON_BIN ($(python_version "$PYTHON_BIN"))"
+
+  if [ "$PROD" = true ]; then
+    echo "Using Production environment"
+    # Production builds must start from a clean virtual environment.
+    VENV_DIR="$PROJECT_DIR/.prod_venv"
+    if [ -d "$VENV_DIR" ]; then
+      echo "Deleting existing production virtual environment at $VENV_DIR..."
+      rm -rf "$VENV_DIR"
     fi
-    # Activate the virtual environment
-    source "$VENV_DIR/bin/activate"
-    # Ensure setuptools and wheel are installed
-    pip install --upgrade setuptools wheel build
-    # Build the distribution
-    python3 -m build --outdir .build
-    # Deactivate the virtual environment
-    deactivate
-    # Create the blobs directory if it doesn't exist
-    BLOBS_DIR="$PROJECT_DIR/blobs"
-    mkdir -p "$BLOBS_DIR"
-    # Move only the source distribution (.tar.gz) to the blobs directory
-    mv .build/*.tar.gz "$BLOBS_DIR/"
+  else
+    echo "Using Development environment"
+    # Non-production builds reuse the existing development virtual environment.
+    VENV_DIR="$PROJECT_DIR/.dev_venv"
+  fi
+
+  if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment at $VENV_DIR..."
+    "$PYTHON_BIN" -m venv "$VENV_DIR"
+  else
+    echo "Virtual environment already exists at $VENV_DIR"
+  fi
+
+  if ! "$VENV_DIR/bin/python" - <<'PY'
+import sys
+raise SystemExit(0 if sys.version_info >= (3, 11) else 1)
+PY
+  then
+    echo "Error: Virtual environment at $VENV_DIR uses Python older than 3.11." >&2
+    exit 1
+  fi
+
+  # Ensure setuptools and wheel are installed
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip setuptools wheel build
+  # Clean build output to avoid moving stale artifacts into blobs.
+  rm -rf "$PROJECT_DIR/.build"
+  # Build the distribution
+  "$VENV_DIR/bin/python" -m build --outdir "$PROJECT_DIR/.build"
+  # Create the blobs directory if it doesn't exist
+  BLOBS_DIR="$PROJECT_DIR/blobs"
+  mkdir -p "$BLOBS_DIR"
+  # Move only the source distribution (.tar.gz) to the blobs directory
+  mv .build/*.tar.gz "$BLOBS_DIR/"
 }
 
-#check_dirty_changes
+printf "%-20s: %s\n" "Mode" "$MODE"
+
+if [ "$PROD" = true ]; then
+  rm -rf "$PROJECT_DIR/.prod_venv"
+  check_dirty_changes
+fi
+
 set +e
 build &> "$log_file"
 build_status=$?

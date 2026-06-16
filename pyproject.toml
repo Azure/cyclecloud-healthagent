@@ -6,9 +6,10 @@ build-backend = "setuptools.build_meta"
 name = "healthagent"
 version = "2.0.0"
 requires-python = ">=3.11"
-dependencies = ["dbus-next", "systemd-python", "pytest-asyncio", "pyyaml", "pydantic>=2,<3"]
+dependencies = ["dbus-next", "systemd-python", "pyyaml", "pydantic>=2,<3"]
 
 [project.optional-dependencies]
+dev = ["build", "pytest", "pytest-asyncio"]
 gpu = ["cuda-bindings"]
 
 [tool.pytest.ini_options]
