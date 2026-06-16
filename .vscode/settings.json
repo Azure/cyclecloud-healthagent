@@ -1,4 +1,4 @@
-{   "python.defaultInterpreterPath": "${workspaceFolder}/.venv/bin/python",
+{   "python.defaultInterpreterPath": "${workspaceFolder}/.dev_venv/bin/python",
 
     "python.autoComplete.extraPaths": [
         

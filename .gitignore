@@ -1,8 +1,12 @@
 blobs/
+*.egg-info/
 build/
 .build/
 .build.log
 .venv/
+.dev_venv/
+.prod_venv/
+.ignore/
 .bindings
 *.pyc
 .context/
