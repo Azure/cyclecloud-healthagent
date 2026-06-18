@@ -9,6 +9,7 @@ modules:
   - network
   - kmsg
   - proc
+  - disk
 
 # ── Network module ──────────────────────────────────────
 network:
@@ -135,3 +136,13 @@ proc:
 
 # ── Kmsg module ─────────────────────────────────────────
 kmsg: {}
+
+# ── Disk module ─────────────────────────────────────────
+disk:
+  mounts:
+    /:
+      space_pct:
+        error: 95
+        warning: 90
+      inode_pct:
+        error: 95
