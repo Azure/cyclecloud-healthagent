@@ -56,7 +56,7 @@ def _report(name, value_str, ok):
 # Using integer IDs directly so we don't need DCGM Python bindings
 FI_GPU_TEMP                  = 150
 FI_CLOCKS_EVENT_REASONS      = 112
-FI_PERSISTENCE_MODE          = 65
+FI_PERSISTENCE_MODE          = 66
 FI_ECC_DBE_VOL_TOTAL         = 311
 FI_ROW_REMAP_FAILURE         = 395
 FI_RETIRED_PENDING           = 392
