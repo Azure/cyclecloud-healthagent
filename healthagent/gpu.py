@@ -290,7 +290,7 @@ class GpuHealthChecks(HealthModule):
 
                     for watch in self.field_watches:
                         samples = field_values.get(watch["field_id"])
-                        if not samples or samples[0].isBlank:
+                        if not samples or samples[-1].isBlank:
                             continue
 
                         newest = samples[-1]
