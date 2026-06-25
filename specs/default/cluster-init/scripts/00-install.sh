@@ -3,15 +3,20 @@ set -x
 set -e
 set -o pipefail
 
-# Cluster-Init (v1) script to setup healthagent
+# Cluster-Init (v1) entry script to setup healthagent.
+# Handles all CycleCloud jetpack interactions (config + package download), then
+# delegates the actual machine setup to setup-healthagent.sh, which is
+# jetpack-independent and can also be run standalone on any supported machine.
 HEALTHAGENT_VERSION=2.0.0
 HEALTHAGENT_DIR="/opt/healthagent"
-VENV_DIR="$HEALTHAGENT_DIR/.venv"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
-SERVICE_FILE="/etc/systemd/system/healthagent.service"
 PACKAGE="healthagent-$HEALTHAGENT_VERSION.tar.gz"
-DCGM_VERSION="4.2.3"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SETUP_SCRIPT="$SCRIPT_DIR/setup-healthagent.sh"
 
+mkdir -p "$HEALTHAGENT_DIR"
+# Send all output to both stdout and the install log.
+exec > >(tee -a "$LOG_FILE") 2>&1
 
 # Check if OS is supported before proceeding
 if [ -f /etc/os-release ]; then
@@ -39,198 +44,42 @@ if [ "$disable_healthagent" == "True" ]; then
     exit 0
 fi
 
-setup_venv() {
-    set -x
-
-    if [ "$OS" == "almalinux" ]; then
-        echo "Detected AlmaLinux. Installing Python 3.12..."
-        # healthagent takes a dependency on systemd and needs python bindings for systemd.
-        # "python3-systemd" is the official package for this which is installed through yum/apt.
-        # but only system python can access it. To use this package inside
-        # a virtual env we need to do a pip install of the package inside the venv, which requires development headers
-        # for python and systemd to be present, since the package is actually built during the install.
-        yum install -y python3.12 python3.12-devel
-        yum install -y pkg-config gcc systemd-devel
-        PYTHON_BIN="/usr/bin/python3.12"
-    elif [ "$OS" == "ubuntu" ] && [ "$VERSION_ID" == "22.04" ]; then
-        echo "Detected Ubuntu 22.04. Installing Python 3.11..."
-        apt update
-        # We need python dev headers and systemd dev headers for same reason mentioned above.
-        apt install -y python3.11 python3.11-venv python3.11-dev
-        apt install -y pkg-config gcc libsystemd-dev
-        PYTHON_BIN="/usr/bin/python3.11"
-    elif [ "$OS" == "ubuntu" ] && [[ "$VERSION_ID" =~ ^24\.* ]]; then
-        echo "Detected Ubuntu 24. Installing Python 3.12..."
-        apt update
-        apt install -y python3.12 python3.12-venv python3.12-dev
-        apt install -y pkg-config gcc libsystemd-dev
-        PYTHON_BIN="/usr/bin/python3.12"
-    elif [ "$OS" == "rhel" ]; then
-        echo "Detected RHEL, using system python3..."
-        yum install -y python3-devel pkg-config gcc systemd-devel
-        PYTHON_BIN="/usr/bin/python3"
-    else
-        echo "Unsupported operating system: $OS $VERSION_ID"
-        exit 0
-    fi
-    # Create the virtual environment
-    echo "Creating virtual environment at $VENV_DIR..."
-    # Check if the virtual environment already exists and delete it if it does
-    if [ -d "$VENV_DIR" ]; then
-        echo "Virtual environment already exists at $VENV_DIR. Deleting it..."
-        rm -rf "$VENV_DIR"
-    fi
-    $PYTHON_BIN -m venv $VENV_DIR
-}
-
-download_install_healthagent() {
-
-    set -x
-    cd $HEALTHAGENT_DIR
-    # Check if the package already exists and delete it if it does
-    if [ -f "$PACKAGE" ]; then
-        echo "Package $PACKAGE already exists. Deleting it..."
-        rm -f "$PACKAGE"
-    fi
-
-    echo "Downloading healthagent package: $PACKAGE"
-    /opt/cycle/jetpack/bin/jetpack download --project healthagent $PACKAGE
-    echo "Installing healthagent package..."
-    source $VENV_DIR/bin/activate
-    if ! pip install --force-reinstall $PACKAGE; then
-        echo "ERROR: Failed to install $PACKAGE"
-        deactivate || true
-        exit 1
-    fi
-    # Copy the "health" script to /usr/bin
-    if ! healthagent-install; then
-        echo "ERROR: Failed to run healthagent-install"
-        deactivate || true
-        exit 1
-    fi
-
-    deactivate
-}
-setup_dcgm() {
-    set -x
-
-    echo "Setting up DCGM (Datacenter GPU Manager)..."
-
-    # Define the minimum required version
-    REQUIRED_VERSION="4.2.3"
-
-    # Check if dcgmi is installed and get the installed version
-    if command -v dcgmi &> /dev/null; then
-        INSTALLED_VERSION=$(dcgmi --version | grep -i "version" | awk '{print $3}')
-        echo "Installed DCGM version: $INSTALLED_VERSION"
-    else
-        echo "DCGM is not installed."
-        INSTALLED_VERSION=""
-    fi
-
-    # Compare the installed version with the required version
-    if [ -z "$INSTALLED_VERSION" ] || [ "$(printf '%s\n' "$REQUIRED_VERSION" "$INSTALLED_VERSION" | sort -V | head -n1)" != "$REQUIRED_VERSION" ]; then
-        echo "DCGM version is older than $REQUIRED_VERSION or not installed. Installing the latest package..."
-        if [ "$OS" == "almalinux" ] || [ "$OS" == "rhel" ]; then
-            yum install --allowerasing -y datacenter-gpu-manager-4-core
-            yum install --allowerasing -y datacenter-gpu-manager-4-cuda12
-        elif [ "$OS" == "ubuntu" ]; then
-            apt update
-            apt install -y datacenter-gpu-manager-4-core
-            apt install -y datacenter-gpu-manager-4-cuda12
-        else
-            echo "Unsupported operating system: $OS $VERSION_ID"
+# If the expected version is already installed, just restart and exit.
+if [ -f "$HEALTHAGENT_DIR/.install" ]; then
+    # Source the file to load HEALTHAGENT variable
+    source "$HEALTHAGENT_DIR/.install"
+    if [ "$HEALTHAGENT_INSTALLED_VERSION" == "$HEALTHAGENT_VERSION" ]; then
+        echo "HealthAgent version $HEALTHAGENT_INSTALLED_VERSION is already installed. Skipping installation."
+        if ! systemctl restart healthagent; then
+            echo "Failed to restart healthagent service. Please check the service configuration and logs."
             exit 1
         fi
+        echo "HealthAgent service restarted successfully."
+        exit 0
     else
-        echo "DCGM is up-to-date."
+        echo "Installed version ($HEALTHAGENT_INSTALLED_VERSION) does not match expected version ($HEALTHAGENT_VERSION). Reinstalling..."
+        rm -f "$HEALTHAGENT_DIR/.install"
     fi
+fi
 
-    # Set environment variables
-    echo "Setting environment variables..."
-    if command -v nv-hostengine &> /dev/null; then
-        DCGM_VERSION=$(nv-hostengine --version | grep -i Version | awk '{print $3}' || echo "")
-    else
-        DCGM_VERSION=""
-    fi
+# Download the healthagent package via jetpack.
+cd "$HEALTHAGENT_DIR"
+# Check if the package already exists and delete it if it does
+if [ -f "$PACKAGE" ]; then
+    echo "Package $PACKAGE already exists. Deleting it..."
+    rm -f "$PACKAGE"
+fi
+echo "Downloading healthagent package: $PACKAGE"
+/opt/cycle/jetpack/bin/jetpack download --project healthagent "$PACKAGE"
 
-    systemctl daemon-reload
-    systemctl restart nvidia-dcgm
-    echo "export DCGM_VERSION=$DCGM_VERSION" >> $VENV_DIR/bin/activate
-    echo "export HEALTHAGENT_DIR=$HEALTHAGENT_DIR" >> $VENV_DIR/bin/activate
-}
+# Delegate the rest of the (jetpack-independent) setup to the standalone script.
+if [ ! -f "$SETUP_SCRIPT" ]; then
+    echo "Setup script not found: $SETUP_SCRIPT"
+    exit 1
+fi
+# Logging is already configured here, so tell the setup script not to re-tee.
+HEALTHAGENT_LOG_CONFIGURED=1 bash "$SETUP_SCRIPT" "$HEALTHAGENT_DIR/$PACKAGE"
 
-setup_systemd() {
-    set -x
-
-    # Create the systemd service file
-    echo "Creating systemd service file at $SERVICE_FILE..."
-    cat <<EOL > $SERVICE_FILE
-[Unit]
-Description=HealthAgent Service
-After=network.target
-
-[Service]
-Environment="DCGM_VERSION=$DCGM_VERSION"
-Environment="HEALTHAGENT_DIR=$HEALTHAGENT_DIR"
-WorkingDirectory=$HEALTHAGENT_DIR
-ExecStart=$VENV_DIR/bin/python3 $VENV_DIR/bin/healthagent
-Restart=always
-User=root
-Group=root
-WatchdogSec=600s
-
-[Install]
-WantedBy=multi-user.target
-EOL
-
-    # Reload systemd, enable and start the service
-    echo "Reloading systemd, enabling and starting healthagent service..."
-    systemctl daemon-reload
-    systemctl enable healthagent.service
-    #systemctl start healthagent.service
-
-    echo "HealthAgent service setup complete."
-}
-
-mkdir -p $HEALTHAGENT_DIR
-# Redirect all stdout and stderr to the logfile
-{
-    if [ -f "$HEALTHAGENT_DIR/.install" ]; then
-        # Source the file to load HEALTHAGENT variable
-        source "$HEALTHAGENT_DIR/.install"
-        if [ "$HEALTHAGENT_INSTALLED_VERSION" == "$HEALTHAGENT_VERSION" ]; then
-            echo "HealthAgent version $HEALTHAGENT_INSTALLED_VERSION is already installed. Skipping installation."
-            systemctl restart healthagent
-            if [ $? -ne 0 ]; then
-                echo "Failed to restart healthagent service. Please check the service configuration and logs."
-                exit 1
-            fi
-            echo "HealthAgent service restarted successfully."
-            exit 0
-        else
-            echo "Installed version ($HEALTHAGENT_INSTALLED_VERSION) does not match expected version ($HEALTHAGENT_VERSION). Reinstalling..."
-            rm -f "$HEALTHAGENT_DIR/.install"
-        fi
-    fi
-
-
-    setup_venv
-    download_install_healthagent
-    # Check if gpu's exist
-    if [ -e "/dev/nvidia0" ]; then
-        echo "NVIDIA GPU is present"
-        setup_dcgm
-        source $VENV_DIR/bin/activate
-        if ! pip install cuda-bindings; then
-            echo "WARNING: Failed to install cuda-bindings"
-        fi
-        deactivate
-    fi
-    setup_systemd
-    echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > $HEALTHAGENT_DIR/.install
-    if ! systemctl restart healthagent; then
-        echo "Failed to restart healthagent service. Please check the service configuration and logs."
-        exit 1
-    fi
-} 2>&1 | tee "$LOG_FILE"
+# Record the installed version so subsequent runs can skip reinstalling.
+echo "HEALTHAGENT_INSTALLED_VERSION=$HEALTHAGENT_VERSION" > "$HEALTHAGENT_DIR/.install"
+echo "HealthAgent installation complete."
