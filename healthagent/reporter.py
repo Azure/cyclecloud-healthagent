@@ -6,6 +6,7 @@ from time import time
 from typing import Any, Dict
 import logging
 import os
+import subprocess
 from healthagent.scheduler import Scheduler
 
 log = logging.getLogger('healthagent')
@@ -142,6 +143,8 @@ class HealthReport:
 
 class Reporter:
 
+    JETPACK_VERSION_MINIMUM = "8.8.0"
+    JETPACK_VERSION_GHR = "8.10.0"
     def __init__(self, name: str = None):
         """
         name: name of the health report (optional)
@@ -149,15 +152,49 @@ class Reporter:
         self.jetpack = "/opt/cycle/jetpack/bin/jetpack"
         self.store = {}
         self.publish_cc = os.getenv("PUBLISH_CC", 'true').lower() == 'true'
+        self.enable_ghr = True
 
         if not os.path.exists(self.jetpack):
             log.info(f"{self.jetpack} not found")
             self.publish_cc = False
+            self.enable_ghr = False
+        elif self.publish_cc:
+            version = self._get_jetpack_version()
+            if version is None or version < self._parse_version(self.JETPACK_VERSION_MINIMUM):
+                self.publish_cc = False
+                self.enable_ghr = False
+                log.warning(f"Jetpack version too old or unknown, disabling CC publishing and GHR")
+            elif version < self._parse_version(self.JETPACK_VERSION_GHR):
+                self.enable_ghr = False
+                log.info(f"Jetpack version < {self.JETPACK_VERSION_GHR}, disabling GHR")
 
         if not self.publish_cc:
-            log.info(f"Disabling publishing reports to CC")
+            log.info("Disabling publishing reports to CC.")
+            self.enable_ghr = False
+        if not self.enable_ghr:
+            log.info("Disabling Guest Health Reporting")
         if name:
             self.store[name] = HealthReport()
+
+
+    @staticmethod
+    def _parse_version(version_str: str) -> tuple:
+        """Parse '8.10.0-3822' → (8, 10, 0)"""
+        base = version_str.strip().split('-')[0]
+        return tuple(int(x) for x in base.split('.'))
+
+    def _get_jetpack_version(self) -> tuple | None:
+
+        try:
+            result = subprocess.run(
+                [self.jetpack, '--version'],
+                capture_output=True, text=True, timeout=10
+            )
+            if result.returncode == 0:
+                return self._parse_version(result.stdout)
+        except Exception as e:
+            log.warning(f"Failed to determine jetpack version: {e}")
+        return None
 
     @classmethod
     def load_reporter_obj(cls, old) -> 'Reporter':
