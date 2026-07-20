@@ -8,6 +8,7 @@ from healthagent.util import read_kernel_attrs, evaluate, TimeSeries
 from healthagent.healthmodule import HealthModule
 from healthagent.config import NetworkConfig, ThresholdCheck
 from healthagent.reporter import Reporter, HealthReport, HealthStatus
+from healthagent.ghr import GHRCategory
 from healthagent.scheduler import Scheduler
 
 log = logging.getLogger('healthagent')
@@ -48,6 +49,12 @@ class NetworkInterface:
 
 
 class NetworkHealthChecks(HealthModule):
+
+    _NET_GHR_MAP = {
+        ("infiniband", "state"): GHRCategory.IB_PORT_DOWN,
+        ("infiniband", "phys_state"): GHRCategory.IB_PORT_DOWN,
+        ("infiniband", "link_downed"): GHRCategory.IB_PORT_FLAPPING,
+    }
 
     def __init__(self, reporter: Reporter, config: 'NetworkConfig | None' = None):
         super().__init__(reporter, config or NetworkConfig())
@@ -118,10 +125,12 @@ class NetworkHealthChecks(HealthModule):
         report = HealthReport()
         custom_fields = {}
         details = []
+        ghr_error = None
+        ghr_any = None
         # Derive port-level field names from the IBPort dataclass
         _ib_port_fields = {f.name for f in fields(IBPort)}
 
-        def check_field(iface_name, field, check: 'ThresholdCheck', value, port_num=None):
+        def check_field(iface_name, field, check: 'ThresholdCheck', value, port_num=None, config_key=None):
             key = (iface_name, field, port_num)
             max_strikes = check.strikes
 
@@ -162,10 +171,19 @@ class NetworkHealthChecks(HealthModule):
                         custom_fields.setdefault(iface_name, {}).setdefault("errors", []).append(msg)
                         details.append(f"ERROR: {iface_name} - {msg}")
                         report.escalate(HealthStatus.ERROR)
+                        ghr_cat = self._NET_GHR_MAP.get((config_key, field))
+                        if ghr_cat:
+                            nonlocal ghr_error
+                            ghr_error = ghr_cat
                     else:
                         custom_fields.setdefault(iface_name, {}).setdefault("warnings", []).append(msg)
                         details.append(f"WARNING: {iface_name} - {msg}")
                         report.escalate(HealthStatus.WARNING)
+                        ghr_cat = self._NET_GHR_MAP.get((config_key, field))
+                        if ghr_cat:
+                            nonlocal ghr_any
+                            if ghr_any is None:
+                                ghr_any = ghr_cat
                     break  # error takes precedence over warning
 
             # Strike tracking: count OK→ERROR transitions
@@ -193,13 +211,13 @@ class NetworkHealthChecks(HealthModule):
                         value = getattr(port, field, None)
                         if value is None:
                             continue
-                        check_field(ni.name, field, check, value, port_num=port_num)
+                        check_field(ni.name, field, check, value, port_num=port_num, config_key=config_key)
                 else:
                     # Interface-level field
                     value = getattr(ni, field, None)
                     if value is None:
                         continue
-                    check_field(ni.name, field, check, value)
+                    check_field(ni.name, field, check, value, config_key=config_key)
 
             if ni.ib_device:
                 custom_fields[ni.name]["ib_device"] = {
@@ -215,5 +233,7 @@ class NetworkHealthChecks(HealthModule):
         report.custom_fields = custom_fields
         if report.status != HealthStatus.OK:
             report.description = "Network health issues detected"
+
+        report.ghr_category = ghr_error or ghr_any
 
         await self.reporter.update_report(self.run_network_checks.report_name, report=report)
