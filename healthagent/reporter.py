@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 from healthagent.scheduler import Scheduler
+from healthagent.ghr import GHRCategory
 
 log = logging.getLogger('healthagent')
 
@@ -86,6 +87,8 @@ class HealthReport:
     # attribute in __post_init__. Note: aux_data will not survive an asdict() round-trip;
     # use deepcopy(report) to preserve it.
     aux_data: InitVar[dict] = None
+    # Azure Guest Health Reporting
+    ghr_category: GHRCategory = None
 
     def __eq__(self, other):
         if not isinstance(other, HealthReport):
@@ -283,6 +286,10 @@ class Reporter:
                 args.extend(['-r', report.recommendations])
             if report.details is not None:
                 args.extend(['--details', report.details])
+
+            if self.enable_ghr:
+                if report.ghr_category is not None:
+                    args.extend(['--action-type', 'GHR', '--ghr-category', report.ghr_category.value])
 
         # Schedule the subprocess task
         task = Scheduler.subprocess(*args)

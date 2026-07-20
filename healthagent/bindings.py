@@ -6,6 +6,7 @@ import types
 import asyncio
 from pathlib import Path
 from healthagent.reporter import HealthStatus
+from healthagent.ghr import GHRCategory
 import logging
 
 DCGM_VERSION = os.getenv("DCGM_VERSION")
@@ -73,6 +74,16 @@ def _resolve_error_codes_with_notes(*pairs):
         code = getattr(dcgm_errors, name, None)
         if code is not None:
             codes[code] = f"Healthagent Note: {note}"
+    return codes
+
+def _resolve_ghr_codes(*pairs):
+    """Resolve (DCGM_FR_name, GHRCategory) pairs to {int_code: GHRCategory} dict,
+    skipping any that don't exist in the installed dcgm_errors module."""
+    codes = {}
+    for name, ghr in pairs:
+        code = getattr(dcgm_errors, name, None)
+        if code is not None:
+            codes[code] = ghr
     return codes
 
 # System/reference fields — needed by non-watch code (XID handling, gpu_count_check,
@@ -144,6 +155,42 @@ class Wrap:
 
     fields = _Fields
 
+    XID_GHR_MAP = {
+        48: GHRCategory.XID48_DOUBLE_BIT_ECC,
+        79: GHRCategory.XID79_FALLEN_OFF_BUS,
+        93: GHRCategory.INFOROM_CORRUPTION,
+        94: GHRCategory.XID94_CONTAINED_ECC,
+        95: GHRCategory.XID95_UNCONTAINED_ECC,
+        60: GHRCategory.DCGMI_THERMAL,
+        61: GHRCategory.DCGMI_THERMAL,
+        62: GHRCategory.DCGMI_THERMAL,
+    }
+
+    ERROR_GHR_MAP = _resolve_ghr_codes(
+        # Health watch errors
+        ("DCGM_FR_NVLINK_DOWN", GHRCategory.NVLINK),
+        ("DCGM_FR_NVLINK_ERROR_CRITICAL", GHRCategory.NVLINK),
+        ("DCGM_FR_NVSWITCH_FATAL_ERROR", GHRCategory.NVLINK),
+        ("DCGM_FR_FIELD_THRESHOLD_DBL", GHRCategory.DCGMI_THERMAL),
+        # Diagnostic errors
+        ("DCGM_FR_CUDA_DBE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_MEMORY_MISMATCH", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_FAULTY_MEMORY", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_L1TAG_MISCOMPARE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_MEMORY_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_WRITER_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_NVLINK_WRITER_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_NVLINK_MEMORY_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_PCIE_MEMORY_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_BROKEN_P2P_PCIE_WRITER_DEVICE", GHRCategory.DCGM_DIAG_FAILURE),
+        ("DCGM_FR_FABRIC_MANAGER_TRAINING_ERROR", GHRCategory.DCGM_DIAG_FAILURE),
+    )
+
+    FIELD_GHR_MAP = {
+        "DCGM_FI_DEV_ROW_REMAP_FAILURE": GHRCategory.ROW_REMAP_FAILURE,
+        "DCGM_FI_DEV_ECC_DBE_VOL_TOTAL": GHRCategory.XID48_DOUBLE_BIT_ECC,
+    }
+
     ENTITY_GROUP_NAMES = {
         dcgm_fields.DCGM_FE_NONE: "None",
         dcgm_fields.DCGM_FE_GPU: "GPU",
@@ -167,12 +214,12 @@ class Wrap:
         "DCGM_FR_NVSWITCH_FATAL_ERROR",
         "DCGM_FR_FAULTY_MEMORY",
         "DCGM_FR_FIELD_VIOLATION",
-        "DCGM_FR_FABRIC_PROBE_STATE"
+        "DCGM_FR_FABRIC_PROBE_STATE",
+        "DCGM_FR_FIELD_THRESHOLD_DBL",
     )
 
     HEALTH_WARNINGS = _resolve_error_codes(
         "DCGM_FR_PCI_REPLAY_RATE",
-        "DCGM_FR_CORRUPT_INFOROM",
         "DCGM_FR_NVSWITCH_NON_FATAL_ERROR",
         "DCGM_FR_NVLINK_SYMBOL_BER_THRESHOLD",
         "DCGM_FR_NVLINK_EFFECTIVE_BER_THRESHOLD",
@@ -512,5 +559,5 @@ class Wrap:
         return policy
     @classmethod
     def get_health_mask(cls):
-        exclude_mask = dcgm_structs.DCGM_HEALTH_WATCH_THERMAL | dcgm_structs.DCGM_HEALTH_WATCH_POWER
+        exclude_mask = dcgm_structs.DCGM_HEALTH_WATCH_POWER
         return dcgm_structs.DCGM_HEALTH_WATCH_ALL & ~exclude_mask
