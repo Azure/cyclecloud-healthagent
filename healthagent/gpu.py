@@ -218,6 +218,7 @@ class GpuHealthChecks(HealthModule):
         unique_counts = set(custom_fields.values())
         if len(unique_counts) > 1:
             report.status = HealthStatus.ERROR
+            report.ghr_category = GHRCategory.MISSING_GPU
             detail_parts = [f"{source} shows {count}" for source, count in custom_fields.items()]
             report.details = "GPU count mismatch: " + ", ".join(detail_parts)
             report.description = "GPU Count Mismatch"
@@ -326,8 +327,14 @@ class GpuHealthChecks(HealthModule):
                         custom_fields[entity_key]["errors" if severity == "error" else "warnings"].append(msg)
                         if severity == "error":
                             custom_fields['error_count'] += 1
+                            ghr_cat = Wrap.FIELD_GHR_MAP.get(watch["field"])
+                            if ghr_cat:
+                                custom_fields['_ghr_field_error'] = ghr_cat
                         else:
                             custom_fields['warning_count'] += 1
+                            ghr_cat = Wrap.FIELD_GHR_MAP.get(watch["field"])
+                            if ghr_cat and '_ghr_field_any' not in custom_fields:
+                                custom_fields['_ghr_field_any'] = ghr_cat
                         custom_fields['category'].add(watch["category"])
 
                     # XID handling — GPU entities only
@@ -485,6 +492,48 @@ class GpuHealthChecks(HealthModule):
                     if not isinstance(v, dict) or any(v.values())
                 }
 
+                # Resolve GHR category from XIDs and health incidents
+                ghr_error = None
+                ghr_any = None
+
+                # Check health incidents for GHR-mapped error codes
+                for index in range(0, incident_count):
+                    error_code = group_health.incidents[index].error.code
+                    ghr_cat = Wrap.ERROR_GHR_MAP.get(error_code)
+                    if ghr_cat:
+                        if ghr_any is None:
+                            ghr_any = ghr_cat
+                        if error_code in Wrap.HEALTH_ERRORS and ghr_error is None:
+                            ghr_error = ghr_cat
+
+                # Check XIDs
+                for gpu_id, xids in self.xid_history.items():
+                    for xid_num in xids:
+                        if xid_num in self.xid_ignore:
+                            continue
+                        category = Wrap.XID_GHR_MAP.get(xid_num, GHRCategory.GPU_XID_ERROR)
+                        if ghr_any is None:
+                            ghr_any = category
+                        is_error = xid_num not in self.xid_warning
+                        if self.xid_error and xid_num not in self.xid_error:
+                            is_error = False
+                        if is_error and ghr_error is None:
+                            ghr_error = category
+
+                # Check field watches
+                if '_ghr_field_error' in custom_fields:
+                    if ghr_error is None:
+                        ghr_error = custom_fields.pop('_ghr_field_error')
+                    else:
+                        custom_fields.pop('_ghr_field_error')
+                if '_ghr_field_any' in custom_fields:
+                    if ghr_any is None:
+                        ghr_any = custom_fields.pop('_ghr_field_any')
+                    else:
+                        custom_fields.pop('_ghr_field_any')
+
+                report.ghr_category = ghr_error or ghr_any
+
                 if custom_fields['error_count'] == 0 and custom_fields['warning_count'] == 0:
                     await self.reporter.update_report(name=health_system, report=report)
                     return
@@ -640,6 +689,14 @@ def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str 
     if not isHealthy:
         report.description = "GPU Diagnostic test errors"
         report.custom_fields = custom_fields
+
+        # Resolve GHR from diag error codes
+        if response and response.numErrors > 0:
+            for errIdx in range(response.numErrors):
+                ghr_cat = Wrap.ERROR_GHR_MAP.get(response.errors[errIdx].code)
+                if ghr_cat:
+                    report.ghr_category = ghr_cat
+                    break
 
         all_errors = []
         all_warnings = []
