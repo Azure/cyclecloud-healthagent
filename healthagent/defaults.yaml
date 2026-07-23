@@ -94,8 +94,8 @@ gpu:
       msg: "GPU {gpu} persistence mode not set. Restart nvidia-persistenced or reboot."
     DCGM_FI_DEV_GET_GPU_RECOVERY_ACTION:
       eval: in
-      warning: [2]
-      error: [3, 4]
+      warning: [3]
+      error: [1, 2, 4]
       category: System
       msg: "GPU {gpu} recovery action requested (action: {value})"
     DCGM_FI_DEV_ROW_REMAP_FAILURE:
