@@ -41,7 +41,8 @@ class Healthagent:
         ("systemd", "healthagent.async_systemd", "SystemdMonitor"),
         ("kmsg",    "healthagent.kmsg",          "KmsgReader"),
         ("network", "healthagent.network",       "NetworkHealthChecks"),
-        ("proc",    "healthagent.process",       "ProcessMonitor")
+        ("proc",    "healthagent.process",       "ProcessMonitor"),
+        ("disk",    "healthagent.disks",         "DiskHealthChecks")
     ]
 
     @classmethod
