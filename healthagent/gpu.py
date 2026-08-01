@@ -487,10 +487,6 @@ class GpuHealthChecks(HealthModule):
 
                 # TRIM the output for better readability.
                 custom_fields['category'].update(subsystems)
-                report.custom_fields = {
-                    k: v for k, v in custom_fields.items()
-                    if not isinstance(v, dict) or any(v.values())
-                }
 
                 # Resolve GHR category from XIDs and health incidents
                 ghr_error = None
@@ -533,6 +529,12 @@ class GpuHealthChecks(HealthModule):
                         custom_fields.pop('_ghr_field_any')
 
                 report.ghr_category = ghr_error or ghr_any
+
+                # Snapshot custom_fields after internal _ghr_field_* keys are popped.
+                report.custom_fields = {
+                    k: v for k, v in custom_fields.items()
+                    if not isinstance(v, dict) or any(v.values())
+                }
 
                 if custom_fields['error_count'] == 0 and custom_fields['warning_count'] == 0:
                     await self.reporter.update_report(name=health_system, report=report)
@@ -690,10 +692,13 @@ def run_active_healthchecksv2(gpu_id: list = None, tests: str = '', params: str 
         report.description = "GPU Diagnostic test errors"
         report.custom_fields = custom_fields
 
-        # Resolve GHR from diag error codes
+        # Resolve GHR from diag error codes (only classified errors/warnings)
         if response and response.numErrors > 0:
             for errIdx in range(response.numErrors):
-                ghr_cat = Wrap.ERROR_GHR_MAP.get(response.errors[errIdx].code)
+                error_code = response.errors[errIdx].code
+                if error_code not in Wrap.DIAG_ERRORS and error_code not in Wrap.DIAG_WARNINGS:
+                    continue
+                ghr_cat = Wrap.ERROR_GHR_MAP.get(error_code)
                 if ghr_cat:
                     report.ghr_category = ghr_cat
                     break
