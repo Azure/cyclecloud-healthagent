@@ -8,6 +8,7 @@ Healthagent is a node health checking service for datacenter-class Azure HPC VMs
 
 - [Core Concepts](#core-concepts)
 - [Installation](#installation)
+  - [Standalone Installation (non-CycleCloud)](#standalone-installation-non-cyclecloud)
   - [Requirements](#requirements)
 - [Configuration](#configuration)
   - [Config File Location](#config-file-location)
@@ -60,6 +61,24 @@ These concepts translate well to almost every scheduler/workload orchestrator. H
 ## Installation
 
 Healthagent is deployed as a CycleCloud default cluster-init project. Installation is handled automatically by the [cluster-init](specs/default/cluster-init/scripts/00-install.sh) script during node provisioning.
+
+### Standalone Installation (non-CycleCloud)
+
+On any supported machine (no CycleCloud required), install the latest release with a single command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Azure/cyclecloud-healthagent/main/install.sh | sudo bash
+```
+
+To pin a specific version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Azure/cyclecloud-healthagent/main/install.sh | sudo bash -s -- --version 2.0.1
+```
+
+The [install.sh](install.sh) bootstrap downloads the release tarball (`healthagent-<version>.tar.gz`) from [GitHub Releases](https://github.com/Azure/cyclecloud-healthagent/releases), which bundles [setup-healthagent.sh](install/setup-healthagent.sh), then runs the same machine setup used by cluster-init (Python venv, DCGM, and the systemd service). Releases 2.0.1 and newer are supported.
+
+Requirements: run as root (or via `sudo`), `curl` installed, and outbound access to GitHub as well as the OS/NVIDIA package repositories (see [Requirements](#requirements) below). As with any `curl | bash` installer, the script runs as root; you can inspect [install.sh](install.sh) first or pin a version before running.
 
 ### Requirements
 

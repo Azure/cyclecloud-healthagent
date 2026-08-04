@@ -11,8 +11,6 @@ HEALTHAGENT_VERSION=2.0.1
 HEALTHAGENT_DIR="/opt/healthagent"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
 PACKAGE="healthagent-$HEALTHAGENT_VERSION.tar.gz"
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SETUP_SCRIPT="$SCRIPT_DIR/setup-healthagent.sh"
 
 mkdir -p "$HEALTHAGENT_DIR"
 # Send all output to both stdout and the install log.
@@ -72,11 +70,14 @@ fi
 echo "Downloading healthagent package: $PACKAGE"
 /opt/cycle/jetpack/bin/jetpack download --project healthagent "$PACKAGE"
 
-# Delegate the rest of the (jetpack-independent) setup to the standalone script.
-if [ ! -f "$SETUP_SCRIPT" ]; then
-    echo "Setup script not found: $SETUP_SCRIPT"
+# Extract the setup script bundled in the downloaded tarball (guaranteed to
+# match the package version) and delegate the machine setup to it.
+if ! tar -xzf "$HEALTHAGENT_DIR/$PACKAGE" -C "$HEALTHAGENT_DIR" --strip-components=1 --wildcards \
+        '*/install/setup-healthagent.sh' 2>/dev/null; then
+    echo "Setup script not found in package $PACKAGE"
     exit 1
 fi
+SETUP_SCRIPT="$HEALTHAGENT_DIR/install/setup-healthagent.sh"
 # Logging is already configured here, so tell the setup script not to re-tee.
 HEALTHAGENT_LOG_CONFIGURED=1 bash "$SETUP_SCRIPT" "$HEALTHAGENT_DIR/$PACKAGE"
 
