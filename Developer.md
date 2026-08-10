@@ -9,6 +9,7 @@
   - [Integration Tests](#integration-tests)
 - [DCGM Bindings for VS Code](#dcgm-bindings-for-vs-code)
 - [DCGM Test Mode](#dcgm-test-mode)
+- [Kmsg Test Mode](#kmsg-test-mode)
 
 ---
 
@@ -209,3 +210,56 @@ python3 integration/test_inject.py --test clear
 **References:**
 - [DCGM Modes of Operation](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/getting-started.html#modes-of-operation)
 - [DCGM Error Injection Framework](https://docs.nvidia.com/datacenter/dcgm/latest/user-guide/dcgm-error-injection.html#error-injection-workflow)
+
+---
+
+### Kmsg Test Mode
+
+The kmsg module's reserved severe-level buckets (`KERNEL_EMERGENCY` / `KERNEL_ALERT` /
+`KERNEL_CRITICAL`) only react to **genuine kernel messages** (syslog facility `LOG_KERN`).
+Lines written to `/dev/kmsg` from userspace carry the `LOG_USER` facility, so healthagent
+ignores them for severe-level detection — which means you cannot exercise that path by
+injecting test messages unless you opt in.
+
+Setting `KMSG_TEST_MODE=true` relaxes this: userspace-injected lines are also honored for
+the reserved buckets. (Configured regex patterns match regardless of facility, so the
+pattern path works with or without this flag.) Leave it unset in production.
+
+#### Enabling Kmsg Test Mode
+
+Set the environment variable in the healthagent systemd unit file
+(`/etc/systemd/system/healthagent.service`):
+
+```ini
+[Service]
+Environment="KMSG_TEST_MODE=True"
+```
+
+Then reload and restart:
+
+```bash
+systemctl daemon-reload
+systemctl restart healthagent
+```
+
+#### Injecting test messages
+
+The `integration/test_kmsg_inject.py` script adds a temporary regex rule to the config,
+writes reserved severe-level and pattern-matching lines to `/dev/kmsg`, and verifies the
+resulting `KernelLogCheck` report. Run it **inside healthagent's virtualenv** (for PyYAML)
+and **as root** (needs `/dev/kmsg` and config write access):
+
+```bash
+# Full run: add config -> restart healthagent -> inject -> verify
+sudo /opt/healthagent/.venv/bin/python integration/test_kmsg_inject.py
+
+# Or step-by-step (edit config, you restart, then inject/verify):
+sudo /opt/healthagent/.venv/bin/python integration/test_kmsg_inject.py --initialize
+sudo systemctl restart healthagent
+sudo /opt/healthagent/.venv/bin/python integration/test_kmsg_inject.py --inject
+sudo /opt/healthagent/.venv/bin/python integration/test_kmsg_inject.py --verify
+sudo /opt/healthagent/.venv/bin/python integration/test_kmsg_inject.py --teardown
+```
+
+The reserved-level checks in this script require `KMSG_TEST_MODE=True` on the daemon (the
+script prints a reminder); the configured pattern checks work either way.

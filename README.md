@@ -65,12 +65,11 @@ Healthagent is deployed as a CycleCloud default cluster-init project. Installati
 
 **Supported Operating Systems:** Ubuntu (22.04, 24.04), AlmaLinux, RHEL
 
-**Minimum Python Version**: >=Python3.11
+**Minimum Python Version:** Python 3.11 or later
 
-(Only if GPUs are present)
-**DCGM Version**: >= 4.2.3
+**DCGM Version (GPU nodes only):** 4.2.3 or later
 
-Healthagent installation script does attempt to install a suitable python version (from upstream repos) and a DCGM version. But if nvidia-repos are not set and/or if upstream access is blocked-- then healthagent setup script will not succeed.
+The Healthagent installation script attempts to install a suitable Python version from upstream repositories and a compatible DCGM version. If the NVIDIA repositories are not configured or upstream access is blocked, the installation will not succeed.
 
 **Runtime paths:**
 | Path | Purpose |
@@ -94,7 +93,7 @@ cyclecloud.healthagent.disable = True
 
 **Running Healthagent**
 
-Healthagent is a systemd service. Cluster-init script installs and launches the service. It can be managed by the operator using regular systemd rules.
+Healthagent is a systemd service. The cluster-init script installs and launches the service. Operators can manage it using standard systemd commands.
 ```bash
 # view the status of healthagent systemd service
 systemctl status healthagent
@@ -139,7 +138,7 @@ Threshold checks in the configuration (GPU field watches, network checks) use an
 
 **`window_gt` operator:**
 
-Unlike simple comparisons, `window_gt` tracks the *change* in a counter value over a sliding time window. It compares the delta (newest value minus the oldest value within the window) against the threshold. This is useful for detecting flapping or accumulating errors without alerting on absolute counter values. For alerting on absolute counter values use `gt`, `lt` or other basic operators.
+Unlike simple comparisons, `window_gt` tracks the *change* in a counter value over a sliding time window. It compares the delta (newest value minus the oldest value within the window) against the threshold. This is useful for detecting flapping or accumulating errors without alerting on absolute counter values. For alerting on absolute counter values, use `gt`, `lt`, or other basic operators.
 
 Required fields when using `window_gt`:
 - `window`: Time window in seconds over which to measure the delta (e.g., `10800` for 3 hours)
@@ -161,7 +160,7 @@ The `strikes` field controls how many times a check is allowed to recover (trans
 
 #### Override Mechanism
 
-To override default config, place the overrides in `/etc/healthagent/config.yaml`. The final config is created by a deep merge viewable by `health -C` (when healthagent is running). While you can modify the `/etc/healthagent/defaults.yaml` directly-- your changes might get lost on re-install as this file is shipped with the package. After modifying config, healthagent needs to be restarted.
+To override the default config, place the overrides in `/etc/healthagent/config.yaml`. The final config is created by a deep merge viewable through `health -C` when healthagent is running. Although you can modify `/etc/healthagent/defaults.yaml` directly, your changes might be lost during reinstallation because this file ships with the package. Restart healthagent after modifying the config.
 
 ```yaml
 # /etc/healthagent/config.yaml
@@ -250,7 +249,7 @@ Module   Check                  Category            Interval  Args              
 -------  ---------------------  ------------------  --------  ---------------------  --------------------------------------------------------------
 gpu      GpuCountCheck          background          60s                              Check OS vs PCI vs NVML GPU count
 gpu      GpuMemoryCheck         epilog, prolog      -1        gpu_id                 Run GPU memory allocation test. Args: gpu_id=0,1
-gpu      GpuDiagnosticCheck     epilog, prolog      -1        gpu_id, tests, params  Run DCGM diagnostics checks. Eg. Args: gpu_id=0,1 tests=memory
+gpu      GpuDiagnosticCheck     epilog, prolog      -1        gpu_id, tests, params  Run DCGM diagnostics checks. E.g., args: gpu_id=0,1 tests=memory
 gpu      GpuHealthCheck         background          60s                              Periodic GPU health monitoring
 systemd  SystemdServiceCheck    background          async                            Track systemd service health
 kmsg     KernelLogCheck         background          async                            Monitor kernel log for critical messages
@@ -316,7 +315,7 @@ Healthagent is organized into modules. Each module is responsible for a domain o
 
 Monitors NVIDIA GPUs using DCGM (Data Center GPU Manager). Requires GPUs to be present on the node.
 
-MIG mode currently is not supported.
+MIG mode is currently not supported.
 
 | Check | Type | Description | Frequency | Args |
 |-------|------|-------------|-----------|------|
@@ -366,7 +365,7 @@ DCGM_FI_DEV_GPU_TEMP:
   msg: "GPU {gpu} temperature {value}°C exceeds {threshold}°C"
 ```
 
-Similarly field watches can be implemented for any other DCGM field. For example, if workload is sensitive to PCIE Replays and nodes need to be drained for it, this can be expressed in the config file as follows:
+Similarly, field watches can be implemented for any other DCGM field. For example, if a workload is sensitive to PCIe replays and affected nodes need to be drained, this can be expressed in the config file as follows:
 
 ```
 DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
@@ -379,7 +378,7 @@ DCGM_FI_DEV_PCIE_REPLAY_COUNTER:
 
 Configuration overrides have been explained in the [Override Mechanism](#override-mechanism) section.
 
-`health -s` output for GPU health checks
+`health -s` output for GPU health checks:
 
 ```
 root@ccw-gpu-16:~# health -s | jq '.gpu'
@@ -505,15 +504,149 @@ root@ccw-gpu-16:~# health -s | jq '.network'
 
 ### Kernel Message Module
 
-Monitors `/dev/kmsg` for critical kernel messages (severity levels 0–2: EMERG, ALERT, CRIT).
+Watches the kernel log (`/dev/kmsg`) and rolls two sources of health status into a single `KernelLogCheck` report.
 
 | Check | Type | Description | Frequency |
 |-------|------|-------------|-----------|
-| `KernelLogCheck` | Background | Monitor kernel log for critical messages | Async (event-driven) |
+| `KernelLogCheck` | Background | Monitor the kernel log for critical messages and operator-defined patterns | Async (event-driven) |
 
-- Messages older than 1 hour are ignored
-- Errors auto-clear every 5 minutes if no new critical messages have occurred in the past hour
-- Reports at WARNING severity
+**1. Built-in severe-level monitor.** Genuine kernel messages at severity levels **0–2** are automatically flagged as **Error**, under fixed report keys:
+
+| Healthagent report key | Kernel level | Journalctl Severity  |
+|-----|--------------|---------------|
+| `KERNEL_EMERGENCY` | 0 | EMERG |
+| `KERNEL_ALERT` | 1 | ALERT |
+| `KERNEL_CRITICAL` | 2 | CRIT |
+
+**2. Operator-defined regex patterns.** Declaratively "grep" the kernel log — the same thing you'd do with `dmesg | grep`, but done asynchronously in the background. Each configured pattern watches for a message; when it appears, a cumulative match counter is compared against your `warning`/`error` threshold.
+
+General behavior:
+- **At healthagent startup/restart only**, the kernel replays its entire ring buffer, so messages older than 1 hour are skipped to avoid resurfacing stale alerts. Once healthagent is running, new messages are processed as they arrive and any raised alert persists (there is no 1-hour expiry during operation).
+- An entry is reported only once it triggers, so healthy nodes stay quiet.
+- **No auto-recovery** — once a kmsg alert is raised it persists until the node is remediated and healthagent restarts (kernel/hardware faults don't clear themselves).
+
+#### Adding custom patterns
+
+Add rules under `kmsg.patterns` in `/etc/healthagent/config.yaml`. Each rule:
+
+| Field | Required | Default | Value | Meaning |
+|-------|----------|---------|-------|---------|
+| `pattern` | **yes** | — | Python regex string | Tested with `re.search` against each kernel-log line; a line "matches" if the regex is found anywhere in it. Invalid regex fails config validation at startup. |
+| `warning` | one of warning/error | — | integer (a match count) | Raises **Warning** when the cumulative number of matched messages reaches this value. For example, `warning: 2` raises a warning once **2 or more** matching messages have appeared. |
+| `error` | one of warning/error | — | integer (a match count) | Same as `warning`, but raises **Error**. If both `warning` and `error` are set, error takes precedence once its (higher) threshold is met. |
+| `eval` | no | `ge` | `ge` | Compares the cumulative match count using greater-than-or-equal semantics ("at least N times"). Other evaluation operators are rejected for kmsg rules. |
+| `category` | no | — | free-text label | Grouping label surfaced in the report (e.g. `Storage`, `PCIe`, `Memory`). |
+| `msg` | no | — | free-text string | Human-readable message shown in the healthagent report when the rule fires. |
+
+Writing patterns (it's Python `re`, not shell grep):
+- **YAML doubles the backslash** — a regex `QID \d+` is written `"QID \\d+"`. This is the most common mistake.
+- **Case-sensitive by default** — prefix with `(?i)` for case-insensitive matching, e.g. `"(?i)nvme.*timeout"`.
+- Config **deep-merges**, so you can add a single rule without redefining the module, and delete a shipped rule by setting it to `null`.
+
+**Generate a starting pattern from a sample line.** Paste a kernel message, `dmesg`/`journalctl -k` line, or raw `/dev/kmsg` record you care about into this one-liner. It removes the raw kmsg header, a bracketed dmesg timestamp, or the journal's `<host> kernel:` prefix so the pattern applies to the same message body healthagent evaluates. It then escapes regex-special characters and generalizes numbers to `\d+`, printing both the raw regex and the YAML-escaped form to drop into `pattern:`:
+
+```bash
+echo 'node-01 kernel: EXT4-fs (nvme0n1p2): Remounting filesystem read-only' | \
+  python3 -c 'import re,sys;s=sys.stdin.read().rstrip("\n");m=re.match(r"^\d+,\d+,\d+,[^;]*;(.*)$",s);s=m.group(1) if m else re.sub(r"^(?:[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+)?\S+\s+kernel:\s+","",re.sub(r"^\[[^]]+\]\s*","",s));rx=re.sub(r"\d+",r"\\d+",re.escape(s)).replace("\\ "," ");print("regex:",rx);print("yaml :",rx.replace("\\","\\\\"))'
+# regex: EXT\d+\-fs \(nvme\d+n\d+p\d+\): Remounting filesystem read\-only
+# yaml : EXT\\d+\\-fs \\(nvme\\d+n\\d+p\\d+\\): Remounting filesystem read\\-only
+```
+
+Use the `yaml:` line as your `pattern:` value. Treat it as a **starting point** and tighten/loosen as needed — it turns *every* run of digits into `\d+`, so a number that is part of a fixed name (e.g. `EXT4` becomes `EXT\d+`) should be put back by hand.
+
+For example, the YAML pattern can be simplified to target any ext4 device; a complete `ext4_remount_ro` rule appears below.
+
+**Shipped defaults** (see [defaults.yaml](healthagent/defaults.yaml)) watch for verified NVMe faults:
+
+```yaml
+kmsg:
+  patterns:
+    nvme_controller_dead:
+      pattern: "nvme nvme\\d+: (controller is down; will reset|Disabling device after reset failure|resetting controller)"
+      eval: ge
+      error: 1
+      category: Storage
+      msg: "NVMe controller failure/reset"
+
+    nvme_io_timeout:
+      pattern: "nvme nvme\\d+: I/O tag .* QID \\d+ timeout"
+      eval: ge
+      warning: 3          # tolerate transient timeouts; escalate on accumulation
+      category: Storage
+      msg: "Repeated NVMe I/O timeouts"
+
+    nvme_media_error:
+      pattern: "(?:blk_update_request: )?(?:critical medium|I/O) error, dev (nvme\\d+n\\d+|sd[a-z]+)|Unrecovered Read Error"
+      eval: ge
+      warning: 1
+      category: Storage
+      msg: "Block device media / I/O error"
+```
+
+**Adding your own** — for example, reporting an error when ext4 remounts a filesystem as read-only because of an error:
+
+```yaml
+# /etc/healthagent/config.yaml
+kmsg:
+  patterns:
+
+    ext4_remount_ro:
+      pattern: "EXT4-fs \\([^)]*\\): Remounting filesystem read-only"
+      eval: ge
+      error: 1
+      category: Storage
+      msg: "ext4 filesystem remounted read-only"
+```
+
+#### `health -s` output
+
+Healthy node:
+
+```json
+{
+  "kmsg": {
+    "KernelLogCheck": {
+      "status": "OK"
+    }
+  }
+}
+```
+
+Node with a critical kernel message and a matched pattern. The top-level `status` is the overall (max) severity; each entry carries its own `status`, a `count` (rendered as `">=<threshold>"`), when it was `first_seen`, and up to the first 5 matching `samples`:
+
+```json
+{
+  "kmsg": {
+        "KernelLogCheck": {
+            "status": "Error",
+            "message": "KernelLogCheck detected alerts",
+            "description": "Critical kernel messages and/or watched patterns matched",
+            "last_update": "2026-09-23T21:22:35 UTC",
+            "ext4_remount_ro": {
+                "status": "Error",
+                "count": ">=1",
+                "first_seen": "2026-09-23T21:22:40 UTC",
+                "samples": [
+                    "2026-09-23T21:22:40 - EXT4-fs (dm-0): Remounting filesystem read-only"
+                ],
+                "pattern": "EXT4-fs \\([^)]*\\): Remounting filesystem read-only",
+                "category": "Storage"
+            },
+            "KERNEL_CRITICAL": {
+                "status": "Error",
+                "count": ">=1",
+                "first_seen": "2026-09-23T21:22:40 UTC",
+                "samples": [
+                    "2026-09-23T21:22:40 - EXT4-fs error (device dm-0) in ext4_reserve_inode_write:5870: IO failure",
+                    "2026-09-23T21:22:40 - EXT4-fs (dm-0): Remounting filesystem read-only"
+                ]
+            }
+        }
+    }
+}
+```
+
+> **Testing note:** the reserved severe-level buckets only react to genuine kernel messages, so you can't trigger them by writing to `/dev/kmsg` from userspace unless the daemon is started with `KMSG_TEST_MODE`. See [Developer Guide → Kmsg Test Mode](Developer.md#kmsg-test-mode).
 
 ### Process Module
 
