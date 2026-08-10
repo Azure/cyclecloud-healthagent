@@ -134,4 +134,28 @@ proc:
   pid_saturation_pct: 50
 
 # ── Kmsg module ─────────────────────────────────────────
-kmsg: {}
+# Regex watches on kernel-log lines. Each rule's regex selects lines; the eval
+# operator (default: ge) is applied to the cumulative match count.
+# See docs/kmsg-improvements.md.
+kmsg:
+  patterns:
+    nvme_controller_dead:
+      pattern: "nvme nvme\\d+: (controller is down; will reset|Disabling device after reset failure)"
+      eval: ge
+      error: 1
+      category: Storage
+      msg: "NVMe controller failure/reset"
+
+    nvme_io_timeout:
+      pattern: "nvme nvme\\d+: I/O tag .* QID \\d+ timeout"
+      eval: ge
+      warning: 3
+      category: Storage
+      msg: "Repeated NVMe I/O timeouts"
+
+    nvme_media_error:
+      pattern: "(blk_update_request: I/O error, dev nvme\\d+n\\d+|Unrecovered Read Error)"
+      eval: ge
+      warning: 1
+      category: Storage
+      msg: "NVMe media / unrecovered read error"

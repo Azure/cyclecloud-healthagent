@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from healthagent.config import (
     deep_merge, load_config, HealthagentConfig,
     ThresholdCheck, EvalType, ModuleName, ModuleConfig,
+    KmsgConfig, KmsgPatternCheck,
 )
 from healthagent.healthmodule import HealthModule
 from healthagent.reporter import Reporter
@@ -266,3 +267,37 @@ class TestSchemaValidation:
         reloaded = HealthagentConfig.model_validate(dumped)
         assert reloaded.gpu.xid.warning == [43, 63]
         assert reloaded.modules == [ModuleName.GPU, ModuleName.NETWORK]
+
+
+class TestKmsgConfig:
+
+    def test_valid_pattern(self):
+        """A well-formed pattern with a threshold validates."""
+        check = KmsgPatternCheck(pattern=r"nvme.*timeout", error=1)
+        assert check.eval == EvalType.GE  # default
+        assert check.error == 1
+
+    def test_reserved_prefix_rejected(self):
+        """Pattern names using the reserved 'KERNEL_' prefix are rejected."""
+        with pytest.raises(ValidationError):
+            KmsgConfig(patterns={"KERNEL_CRITICAL": KmsgPatternCheck(pattern="x", error=1)})
+
+    def test_non_reserved_name_allowed(self):
+        """A normal pattern name is accepted."""
+        cfg = KmsgConfig(patterns={"nvme_io_timeout": KmsgPatternCheck(pattern="x", warning=3)})
+        assert "nvme_io_timeout" in cfg.patterns
+
+    def test_invalid_regex_rejected(self):
+        """An uncompilable regex fails validation."""
+        with pytest.raises(ValidationError):
+            KmsgPatternCheck(pattern="[unclosed", error=1)
+
+    def test_threshold_required(self):
+        """At least one of warning/error must be set."""
+        with pytest.raises(ValidationError):
+            KmsgPatternCheck(pattern="x")
+
+    def test_defaults_yaml_has_kmsg_patterns(self, tmp_path):
+        """Packaged defaults ship the NVMe rules and validate."""
+        config = load_config(config_path=str(tmp_path / "nonexistent.yaml"))
+        assert "nvme_io_timeout" in config.kmsg.patterns

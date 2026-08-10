@@ -1,11 +1,12 @@
 import os
+import re
 import logging
 import importlib.resources
 from enum import StrEnum
 from typing import Union
 
 import yaml
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, field_validator, model_validator
 
 
 log = logging.getLogger(__name__)
@@ -61,6 +62,35 @@ class ThresholdCheck(BaseModel, extra="forbid"):
         return v
 
 
+class KmsgPatternCheck(ThresholdCheck):
+    """A regex watch on kernel-log lines.
+
+    Inherits msg/category/window/strikes (and their validators) from
+    ThresholdCheck. `pattern` selects lines; `eval` is applied to the cumulative
+    number of matches (see docs/kmsg-improvements.md).
+    """
+    pattern: str
+    eval: EvalType = EvalType.GE
+    # kmsg thresholds are match counts, not arbitrary field values
+    warning: int | None = None
+    error: int | None = None
+
+    @field_validator('pattern')
+    @classmethod
+    def pattern_must_compile(cls, v):
+        try:
+            re.compile(v)
+        except re.error as e:
+            raise ValueError(f"invalid regex pattern {v!r}: {e}")
+        return v
+
+    @model_validator(mode='after')
+    def require_threshold(self):
+        if self.warning is None and self.error is None:
+            raise ValueError("at least one of 'warning' or 'error' is required")
+        return self
+
+
 class ModuleConfig(BaseModel):
     """Base config shared by all health modules."""
     services: list[str] = []
@@ -103,13 +133,27 @@ class ProcConfig(ModuleConfig):
     pid_saturation_pct: int | float = 50
 
 
+class KmsgConfig(ModuleConfig):
+    patterns: dict[str, KmsgPatternCheck] = {}
+
+    @field_validator('patterns')
+    @classmethod
+    def no_reserved_prefix(cls, v):
+        for name in v:
+            if name.startswith('KERNEL_'):
+                raise ValueError(
+                    f"kmsg pattern name {name!r} uses the reserved 'KERNEL_' prefix"
+                )
+        return v
+
+
 class HealthagentConfig(BaseModel, extra="allow"):
     modules: list[ModuleName] = list(ModuleName)
     network: NetworkConfig = NetworkConfig()
     gpu: GpuConfig = GpuConfig()
     systemd: SystemdConfig = SystemdConfig()
     proc: ProcConfig = ProcConfig()
-    kmsg: ModuleConfig = ModuleConfig()
+    kmsg: KmsgConfig = KmsgConfig()
 
 
 def deep_merge(base: dict, override: dict) -> dict:
