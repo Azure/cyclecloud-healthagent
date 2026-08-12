@@ -44,6 +44,20 @@ Defined in `pyproject.toml`:
 - `cuda-bindings` (optional) — GPU support
 - DCGM ≥ 4.0.0 — GPU health checks (system-level dependency)
 
+## Activating python 
+
+Python environments live in the root of the repo: `./dev_venv` and `./prod_venv`. `prod_venv` is for production release packaging and `.dev_venv` is for development work and running tests. For all development use `.dev_venv`. If this file does not exist-- then create it using [dev-setup.sh](../../dev-setup.sh) script, which only needs to be run once.
+
+## Packaging
+
+To package healthagent use [package.sh](../../package.sh).
+
+- `package.sh`: By default uses `.dev_venv`. Does not recreate it if it exists.
+- `package.sh -p` : Used for production builds. Always recreates `.prod_venv` and expects a clean git tree.
+
+Output of `package.sh` goes to `.build.log` in the root of the repo. If this script takes longer than 30 seconds check the output of `.build.log` to find out why it might be hanging. If it is asking for username and password-- then pypi repos may need to be set/enabled.
 ## Tests
 
-Run with `pytest tests/`. Tests cover the health module base class, reporter, systemd monitor, and scheduler.
+Run with `pytest tests/`. `.dev_venv` at the root of the repo must be activated. Tests cover the health module base class, reporter, systemd monitor, and scheduler.
+
+Tests under integration/ are not supposed to be run as unit tests. They are meant for GPU nodes or Azure VM's.

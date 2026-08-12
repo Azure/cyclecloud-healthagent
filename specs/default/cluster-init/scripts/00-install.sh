@@ -7,7 +7,7 @@ set -o pipefail
 # Handles all CycleCloud jetpack interactions (config + package download), then
 # delegates the actual machine setup to setup-healthagent.sh, which is
 # jetpack-independent and can also be run standalone on any supported machine.
-HEALTHAGENT_VERSION=2.0.1
+HEALTHAGENT_VERSION=2.0.2
 HEALTHAGENT_DIR="/opt/healthagent"
 LOG_FILE="$HEALTHAGENT_DIR/healthagent_install.log"
 PACKAGE="healthagent-$HEALTHAGENT_VERSION.tar.gz"
