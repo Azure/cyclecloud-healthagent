@@ -13,8 +13,9 @@ class _Reader(KmsgReader):
     Reuses the real _build_buckets/_ingest/_build_report/_format_details logic.
     """
 
-    def __init__(self, config: KmsgConfig):
+    def __init__(self, config: KmsgConfig, test_mode: bool = False):
         self.config = config
+        self.test_mode = test_mode
         self.buckets = self._build_buckets()
 
 
@@ -32,8 +33,8 @@ T0 = datetime(2026, 8, 11, 10, 0, 0)
 TIMEOUT_LINE = "nvme nvme0: I/O tag 12 QID 4 timeout, aborting"
 
 
-def _feed(reader, seconds, level, msg):
-    reader._ingest(T0 + timedelta(seconds=seconds), level, msg)
+def _feed(reader, seconds, level, msg, facility=0):
+    reader._ingest(T0 + timedelta(seconds=seconds), level, facility, msg)
 
 
 # ── bucket construction ─────────────────────────────────────
@@ -162,3 +163,53 @@ class TestReportShape:
         assert "=== Errors ===" in details
         assert "=== Warnings ===" in details
         assert "Repeated NVMe I/O timeouts" in details  # configured msg
+
+
+# ── facility gating (kernel vs userspace) ───────────────────
+
+class TestFacilityGating:
+
+    def test_reserved_ignores_userspace_by_default(self):
+        reader = _Reader(_config())  # test_mode=False
+        _feed(reader, 0, 2, "userspace crit line", facility=1)
+        report = reader._build_report()
+        assert report.status == HealthStatus.OK
+        assert "KERNEL_CRITICAL" not in report.custom_fields
+
+    def test_reserved_honors_userspace_in_test_mode(self):
+        reader = _Reader(_config(), test_mode=True)
+        _feed(reader, 0, 2, "userspace crit line", facility=1)
+        report = reader._build_report()
+        assert report.status == HealthStatus.ERROR
+        assert report.custom_fields["KERNEL_CRITICAL"]["severity"] == "Error"
+
+    def test_reserved_always_honors_kernel_facility(self):
+        reader = _Reader(_config())  # test_mode=False
+        _feed(reader, 0, 2, "kernel crit line", facility=0)
+        assert reader._build_report().custom_fields["KERNEL_CRITICAL"]["severity"] == "Error"
+
+    def test_pattern_matches_userspace_regardless_of_mode(self):
+        reader = _Reader(_config())  # test_mode=False
+        _feed(reader, 0, 3, "nvme nvme0: controller is down; will reset", facility=1)
+        assert reader._build_report().custom_fields["ctrl_dead"]["severity"] == "Error"
+
+
+# ── priority decoding ───────────────────────────────────────
+
+class TestParseKmsgLine:
+
+    def test_kernel_line_facility_zero(self):
+        reader = _Reader(_config())
+        walltime, level, facility, msg = reader.parse_kmsg_line("3,100,200,-;kernel err")
+        assert (level, facility) == (3, 0)
+        assert msg == "kernel err"
+
+    def test_userspace_priority_decoded(self):
+        reader = _Reader(_config())
+        # priority 10 = facility 1 (user) << 3 | level 2 (crit)
+        _, level, facility, _ = reader.parse_kmsg_line("10,100,200,-;user crit")
+        assert (level, facility) == (2, 1)
+
+    def test_malformed_line_returns_none(self):
+        reader = _Reader(_config())
+        assert reader.parse_kmsg_line("garbage") == (None, None, None, None)

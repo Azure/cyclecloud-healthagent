@@ -77,6 +77,11 @@ class KmsgReader(HealthModule):
 
         super().__init__(reporter, config)
         self.config: KmsgConfig = self.config
+        # When set, honor userspace-injected (non-kernel-facility) lines for the
+        # reserved level buckets too; used by integration tests.
+        self.test_mode = os.getenv("KMSG_TEST_MODE", "false").lower() == "true"
+        if self.test_mode:
+            log.warning("KMSG_TEST_MODE enabled: honoring userspace-injected /dev/kmsg messages")
         self.fd = -1
         self.buckets = self._build_buckets()
         try:
@@ -134,20 +139,26 @@ class KmsgReader(HealthModule):
         | |     |       +-- Message
         | |     +---------- Timestamp
         | +----------------- Sequence #
-        +------------------- Log level
+        +------------------- Priority (facility<<3 | level)
         """
         try:
-            level, seq, usec_since_boot, flags_msg = line.split(",", 3)
+            priority, seq, usec_since_boot, flags_msg = line.split(",", 3)
             walltime = self.boot_time() + timedelta(microseconds=int(usec_since_boot))
-            level = int(level)
+            priority = int(priority)
+            facility, level = priority >> 3, priority & 0x7
             msg = flags_msg.split(';', 1)[-1]
-            return walltime, level, msg
+            return walltime, level, facility, msg
         except Exception:
-            return None, None, None
+            return None, None, None, None
 
 
-    def _ingest(self, walltime, level, msg):
+    def _ingest(self, walltime, level, facility, msg):
+        # Reserved level buckets act only on kernel-facility (0) messages unless
+        # KMSG_TEST_MODE; pattern buckets match any facility.
+        honor_level = facility == 0 or self.test_mode
         for bucket in self.buckets.values():
+            if bucket.pattern_eval is None and not honor_level:
+                continue
             bucket.match_criteria(walltime, level, msg)
 
     @healthcheck("KernelLogCheck", description="Monitor kernel log for critical messages")
@@ -159,13 +170,13 @@ class KmsgReader(HealthModule):
                 if not data:
                     break
                 for line in data.strip().splitlines():
-                    walltime, level, msg = self.parse_kmsg_line(line)
+                    walltime, level, facility, msg = self.parse_kmsg_line(line)
                     if walltime is None:
                         continue
                     # ignore messages older than an hour (kmsg replays the ring buffer)
                     if walltime < cutoff:
                         continue
-                    self._ingest(walltime, level, msg)
+                    self._ingest(walltime, level, facility, msg)
         except BlockingIOError:
             pass
 
@@ -216,9 +227,10 @@ class KmsgReader(HealthModule):
                 continue
             lines.append(f"=== {title} ===")
             for name, resolved_msg, b in items:
-                lines.append(f"  {name}: {resolved_msg}")
+                header = f"  {name}: {resolved_msg}" if resolved_msg != name else f"  {name}:"
+                lines.append(header)
                 lines.append(f"      Hit count: >={b.display_threshold()}")
-                lines.append(f"      first_seen: {b.first}")
+                lines.append(f"      first_seen: {b.first.strftime('%Y-%m-%dT%H:%M:%S')}")
                 for sample in b.samples:
                     lines.append(f"        {sample}")
         return "\n".join(lines)
