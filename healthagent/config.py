@@ -34,6 +34,7 @@ class ModuleName(StrEnum):
     NETWORK = "network"
     KMSG = "kmsg"
     PROC = "proc"
+    DISK = "disk"
 
 
 class ThresholdCheck(BaseModel, extra="forbid"):
@@ -103,6 +104,20 @@ class ProcConfig(ModuleConfig):
     pid_saturation_pct: int | float = 50
 
 
+class MountThreshold(BaseModel):
+    warning: int | None = None
+    error: int | None = None
+
+
+class MountConfig(BaseModel):
+    space_pct: MountThreshold = MountThreshold()
+    inode_pct: MountThreshold = MountThreshold()
+
+
+class DiskConfig(ModuleConfig):
+    mounts: dict[str, MountConfig] = {}
+
+
 class HealthagentConfig(BaseModel, extra="allow"):
     modules: list[ModuleName] = list(ModuleName)
     network: NetworkConfig = NetworkConfig()
@@ -110,6 +125,7 @@ class HealthagentConfig(BaseModel, extra="allow"):
     systemd: SystemdConfig = SystemdConfig()
     proc: ProcConfig = ProcConfig()
     kmsg: ModuleConfig = ModuleConfig()
+    disk: DiskConfig = DiskConfig()
 
 
 def deep_merge(base: dict, override: dict) -> dict:
