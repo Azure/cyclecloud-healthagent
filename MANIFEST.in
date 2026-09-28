@@ -1,0 +1,3 @@
+# Ship the standalone setup script inside the sdist so installers can extract a
+# version-locked copy directly from the release tarball.
+include install/setup-healthagent.sh
