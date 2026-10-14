@@ -1,7 +1,12 @@
 from healthagent.reporter import *
-import pickle
-import os
+from healthagent.healthagent import Healthagent
 import json
+import os
+import pytest
+import stat
+import subprocess
+import sys
+from types import SimpleNamespace
 from unittest.mock import patch,AsyncMock
 import enum
 
@@ -81,7 +86,7 @@ def test_healthreport():
     assert error_report1 == error_report2
 
 
-def test_healthreport_obj():
+def test_reporter_state_json_round_trip():
 
     custom_fields = {}
     custom_fields['error_count']=10
@@ -91,23 +96,104 @@ def test_healthreport_obj():
     categories.add('integration')
     categories.add('epilog')
     custom_fields['categories'] = categories
-    error_report1 = HealthReport(status=HealthStatus.ERROR, description="failed_test_description", custom_fields=custom_fields)
+    custom_fields[0] = {"categories": ("hardware", "gpu")}
+    error_report = HealthReport(
+        status=HealthStatus.ERROR,
+        description="failed_test_description",
+        custom_fields=custom_fields,
+        aux_data={0: {"raw": "diagnostic output"}},
+        ghr_category=GHRCategory.GENERIC_FAILURE,
+    )
+    reporter = Reporter()
+    reporter.store["gpu"] = error_report
 
-    try:
-        json_safe = make_json_safe(error_report1)
-        obj = json.dumps(json_safe)
-    except Exception as e:
-        assert False, f'{e}'
+    serialized = json.dumps(reporter.to_state_dict("2.0.2"), allow_nan=False)
+    restored = Reporter.from_state_dict(json.loads(serialized))
+    report = restored.store["gpu"]
 
-    try:
-        with open('test.pkl', 'wb') as fp:
-            pickle.dump(error_report1, fp)
-        with open('test.pkl', 'rb') as fp:
-            report = pickle.load(fp)
-        assert report.error_count == 10
-    except Exception as e:
-        assert False, f'pickle dumping/loading raised an exception: {e}'
-    os.remove('test.pkl')
+    assert report.status is HealthStatus.ERROR
+    assert report.last_update == error_report.last_update
+    assert report.custom_fields == custom_fields
+    assert report.aux_data == error_report.aux_data
+    assert report.ghr_category is GHRCategory.GENERIC_FAILURE
+
+def test_healthagent_saves_and_loads_reporter_json(tmp_path, monkeypatch):
+    monkeypatch.setattr(Healthagent, "rundir", str(tmp_path))
+    reporter = Reporter()
+    reporter.store["gpu"] = HealthReport(
+        status=HealthStatus.WARNING,
+        custom_fields={0: {"categories": {"XID", "PCIe"}}},
+    )
+    monkeypatch.setattr(Healthagent, "modules", {"gpu": SimpleNamespace(reporter=reporter)})
+
+    Healthagent.save_reporter()
+
+    state_file = tmp_path / "gpu.json"
+    assert state_file.exists()
+    assert stat.S_IMODE(state_file.stat().st_mode) == 0o600
+    restored = Healthagent.get_reporter("gpu")
+    assert restored.store == reporter.store
+    assert not list(tmp_path.glob("*.tmp"))
+
+def test_healthagent_ignores_legacy_pickle_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(Healthagent, "rundir", str(tmp_path))
+    (tmp_path / "gpu.pkl").write_bytes(b"cos\nsystem\n(S'false'\ntR.")
+
+    restored = Healthagent.get_reporter("gpu")
+
+    assert restored.store == {}
+
+def test_healthagent_rejects_malformed_json_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(Healthagent, "rundir", str(tmp_path))
+    state_file = tmp_path / "gpu.json"
+    state_file.write_text("{not valid json", encoding="utf-8")
+    state_file.chmod(0o600)
+
+    restored = Healthagent.get_reporter("gpu")
+
+    assert restored.store == {}
+
+def test_healthagent_rejects_fifo_state_without_blocking(tmp_path):
+    os.mkfifo(tmp_path / "gpu.json", mode=0o600)
+    script = (
+        "import sys; "
+        "from healthagent.healthagent import Healthagent; "
+        "Healthagent.rundir = sys.argv[1]; "
+        "assert Healthagent.get_reporter('gpu').store == {}"
+    )
+
+    subprocess.run(
+        [sys.executable, "-c", script, str(tmp_path)],
+        check=True,
+        timeout=2,
+    )
+
+def test_healthagent_rejects_insecure_reporter_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(Healthagent, "rundir", str(tmp_path))
+    state_file = tmp_path / "gpu.json"
+    state_file.write_text(json.dumps({"schema_version": 1, "reports": {}}))
+    state_file.chmod(0o666)
+
+    restored = Healthagent.get_reporter("gpu")
+
+    assert restored.store == {}
+
+def test_healthagent_prepares_private_runtime_directory(tmp_path, monkeypatch):
+    rundir = tmp_path / "run"
+    monkeypatch.setattr(Healthagent, "workdir", str(tmp_path))
+    monkeypatch.setattr(Healthagent, "rundir", str(rundir))
+
+    Healthagent.prepare_runtime_directory()
+
+    assert stat.S_IMODE(rundir.stat().st_mode) == 0o700
+
+def test_healthagent_rejects_insecure_workdir(tmp_path, monkeypatch):
+    tmp_path.chmod(0o777)
+    monkeypatch.setattr(Healthagent, "workdir", str(tmp_path))
+    monkeypatch.setattr(Healthagent, "rundir", str(tmp_path / "run"))
+
+    with pytest.raises(PermissionError, match="insecure ownership or permissions"):
+        Healthagent.prepare_runtime_directory()
 
 def test_make_json_safe_with_function():
     def foo():

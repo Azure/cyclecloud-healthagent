@@ -53,6 +53,7 @@ fi
 PACKAGE="$(readlink -f "$PACKAGE")"
 
 mkdir -p "$HEALTHAGENT_DIR"
+install -d -m 0700 -o root -g root "$HEALTHAGENT_DIR/run"
 
 # Send all output to both stdout and the install log, unless the caller has
 # already configured logging (e.g. when invoked from 00-install.sh).
@@ -206,6 +207,7 @@ ExecStart=$VENV_DIR/bin/python3 $VENV_DIR/bin/healthagent
 Restart=always
 User=root
 Group=root
+UMask=0077
 WatchdogSec=600s
 
 [Install]

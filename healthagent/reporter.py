@@ -12,6 +12,50 @@ from healthagent.ghr import GHRCategory
 
 log = logging.getLogger('healthagent')
 
+_STATE_TYPE_KEY = "__healthagent_type__"
+
+def encode_state_value(obj):
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return {_STATE_TYPE_KEY: "datetime", "value": obj.isoformat()}
+    if isinstance(obj, set):
+        return {_STATE_TYPE_KEY: "set", "items": [encode_state_value(value) for value in obj]}
+    if isinstance(obj, tuple):
+        return {_STATE_TYPE_KEY: "tuple", "items": [encode_state_value(value) for value in obj]}
+    if isinstance(obj, list):
+        return [encode_state_value(value) for value in obj]
+    if isinstance(obj, dict):
+        return {
+            _STATE_TYPE_KEY: "dict",
+            "items": [
+                [encode_state_value(key), encode_state_value(value)]
+                for key, value in obj.items()
+            ],
+        }
+    raise TypeError(f"Object of type {type(obj).__name__} cannot be persisted")
+
+def decode_state_value(obj):
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, list):
+        return [decode_state_value(value) for value in obj]
+    if not isinstance(obj, dict):
+        raise ValueError("Invalid persisted value")
+
+    value_type = obj.get(_STATE_TYPE_KEY)
+    if value_type == "datetime" and set(obj) == {_STATE_TYPE_KEY, "value"}:
+        return datetime.fromisoformat(obj["value"])
+    if value_type in {"set", "tuple"} and set(obj) == {_STATE_TYPE_KEY, "items"}:
+        items = [decode_state_value(value) for value in obj["items"]]
+        return set(items) if value_type == "set" else tuple(items)
+    if value_type == "dict" and set(obj) == {_STATE_TYPE_KEY, "items"}:
+        return {
+            decode_state_value(item[0]): decode_state_value(item[1])
+            for item in obj["items"]
+        }
+    raise ValueError("Invalid persisted value type")
+
 def make_json_safe(obj):
     if obj is None or isinstance(obj, (str, int, float, bool)):
         return obj
@@ -109,6 +153,49 @@ class HealthReport:
     def __getattr__(self, item):
         return self.custom_fields.get(item, None)
 
+    def to_state_dict(self) -> dict:
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "description": self.description,
+            "details": self.details,
+            "recommendations": self.recommendations,
+            "last_update": self.last_update.isoformat(),
+            "custom_fields": encode_state_value(self.custom_fields),
+            "aux_data": encode_state_value(self.aux_data),
+            "ghr_category": self.ghr_category.value if self.ghr_category else None,
+        }
+
+    @classmethod
+    def from_state_dict(cls, data: dict) -> "HealthReport":
+        if not isinstance(data, dict):
+            raise ValueError("Health report state must be an object")
+
+        last_update = datetime.fromisoformat(data["last_update"])
+        if last_update.utcoffset() is None:
+            raise ValueError("Health report timestamp must include a timezone")
+
+        custom_fields = decode_state_value(data.get("custom_fields", {}))
+        aux_data = decode_state_value(data.get("aux_data"))
+        if not isinstance(custom_fields, dict):
+            raise ValueError("Health report custom_fields must be a dictionary")
+        if aux_data is not None and not isinstance(aux_data, dict):
+            raise ValueError("Health report aux_data must be a dictionary or null")
+
+        ghr_category = data.get("ghr_category")
+        report = cls(
+            status=HealthStatus(data["status"]),
+            message=data.get("message"),
+            description=data.get("description"),
+            details=data.get("details"),
+            recommendations=data.get("recommendations"),
+            custom_fields=custom_fields,
+            aux_data=aux_data,
+            ghr_category=GHRCategory(ghr_category) if ghr_category is not None else None,
+        )
+        report.last_update = last_update
+        return report
+
     def escalate(self, new_status: HealthStatus):
         """
         Only upgrade status, never downgrade.
@@ -148,6 +235,7 @@ class Reporter:
 
     JETPACK_VERSION_MINIMUM = "8.8.0"
     JETPACK_VERSION_GHR = "8.10.0"
+    STATE_SCHEMA_VERSION = 1
     def __init__(self, name: str = None):
         """
         name: name of the health report (optional)
@@ -199,15 +287,39 @@ class Reporter:
             log.warning(f"Failed to determine jetpack version: {e}")
         return None
 
+    def to_state_dict(self, healthagent_version: str) -> dict:
+        return {
+            "schema_version": self.STATE_SCHEMA_VERSION,
+            "healthagent_version": healthagent_version,
+            "reports": {
+                name: report.to_state_dict()
+                for name, report in self.store.items()
+            },
+        }
+
     @classmethod
-    def load_reporter_obj(cls, old) -> 'Reporter':
+    def from_state_dict(cls, data: dict) -> "Reporter":
+        if not isinstance(data, dict):
+            raise ValueError("Reporter state must be an object")
+        if data.get("schema_version") != cls.STATE_SCHEMA_VERSION:
+            raise ValueError(f"Unsupported reporter state schema: {data.get('schema_version')}")
 
-        new_reporter = cls()
-        # Transfer the health report store if it exists
-        if hasattr(old, 'store') and old.store:
-            new_reporter.store = old.store
+        reports = data.get("reports")
+        if not isinstance(reports, dict):
+            raise ValueError("Reporter state reports must be an object")
 
-        return new_reporter
+        reporter = cls()
+        reporter.store = {
+            name: HealthReport.from_state_dict(report)
+            for name, report in reports.items()
+            if isinstance(name, str)
+        }
+        if len(reporter.store) != len(reports):
+            raise ValueError("Reporter state report names must be strings")
+        if reporter.store:
+            for name in reporter.store:
+                log.debug("Restored health report: %s", name)
+        return reporter
 
 
     def get_report(self, name) -> HealthReport:
