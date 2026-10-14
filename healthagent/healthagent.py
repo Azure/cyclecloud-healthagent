@@ -3,9 +3,10 @@ import asyncio
 import importlib
 import json
 import logging
-import pickle
 import os
 import signal
+import stat
+import tempfile
 from time import perf_counter
 from healthagent.scheduler import Scheduler
 from healthagent.reporter import Reporter
@@ -60,15 +61,40 @@ class Healthagent:
     @classmethod
     def get_module_file(cls, module: str):
 
-        return f"{cls.rundir}/{module}.pkl"
+        return f"{cls.rundir}/{module}.json"
+
+    @classmethod
+    def prepare_runtime_directory(cls):
+        workdir_stat = os.lstat(cls.workdir)
+        if not stat.S_ISDIR(workdir_stat.st_mode):
+            raise ValueError(f"Invalid workdir: {cls.workdir}")
+        if workdir_stat.st_uid != os.geteuid() or workdir_stat.st_mode & 0o022:
+            raise PermissionError(f"Workdir has insecure ownership or permissions: {cls.workdir}")
+
+        os.makedirs(cls.rundir, mode=0o700, exist_ok=True)
+        rundir_fd = os.open(cls.rundir, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            rundir_stat = os.fstat(rundir_fd)
+            if rundir_stat.st_uid != os.geteuid():
+                raise PermissionError(f"Runtime directory is not owned by the service user: {cls.rundir}")
+            os.fchmod(rundir_fd, 0o700)
+        finally:
+            os.close(rundir_fd)
 
     @classmethod
     def get_reporter(cls, module: str):
         filename = cls.get_module_file(module=module)
         if os.path.exists(filename):
             try:
-                with open(filename, 'rb') as f:
-                    return Reporter.load_reporter_obj(old=pickle.load(f))
+                flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+                file_fd = os.open(filename, flags)
+                with os.fdopen(file_fd, encoding="utf-8") as state_file:
+                    file_stat = os.fstat(state_file.fileno())
+                    if not stat.S_ISREG(file_stat.st_mode):
+                        raise ValueError(f"Reporter state is not a regular file: {filename}")
+                    if file_stat.st_uid != os.geteuid() or file_stat.st_mode & 0o077:
+                        raise PermissionError(f"Reporter state has insecure permissions: {filename}")
+                    return Reporter.from_state_dict(json.load(state_file))
             except Exception as e:
                 log.error(e)
                 log.error(f"Unable to restore previous state for module {module}")
@@ -79,11 +105,29 @@ class Healthagent:
         for module, obj  in cls.modules.items():
             reporter = obj.reporter
             filename = cls.get_module_file(module=module)
+            temp_filename = None
             try:
-                with open(filename, 'wb') as f:
-                    pickle.dump(reporter, f)
+                file_fd, temp_filename = tempfile.mkstemp(
+                    dir=cls.rundir,
+                    prefix=f".{module}.",
+                    suffix=".tmp",
+                    text=True,
+                )
+                with os.fdopen(file_fd, "w", encoding="utf-8") as state_file:
+                    os.fchmod(state_file.fileno(), 0o600)
+                    json.dump(reporter.to_state_dict(VERSION), state_file, allow_nan=False)
+                    state_file.flush()
+                    os.fsync(state_file.fileno())
+                os.replace(temp_filename, filename)
+                temp_filename = None
             except Exception as e:
                 log.exception(e)
+            finally:
+                if temp_filename is not None:
+                    try:
+                        os.remove(temp_filename)
+                    except FileNotFoundError:
+                        pass
 
 
     @classmethod
@@ -226,11 +270,7 @@ class Healthagent:
         #signal.signal(signalnum=signal.SIGTERM, handler=cls.handler)
         #signal.signal(signalnum=signal.SIGINT, handler=cls.handler)
         Scheduler.start()
-        if not os.path.isdir(cls.workdir):
-            raise ValueError(f"Invalid workdir: {cls.workdir}")
-        if not os.access(cls.workdir, os.W_OK):
-            raise PermissionError(f"Workdir is not writable: {cls.workdir}")
-        os.makedirs(cls.rundir, exist_ok=True)
+        cls.prepare_runtime_directory()
 
         if debug_mode:
             log.info("Running Healthagent in DEBUG Mode")
