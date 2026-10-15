@@ -74,6 +74,28 @@ class ProcessMonitor(HealthModule):
         except (OSError, ValueError):
             return "unknown"
 
+    @staticmethod
+    def _format_details(custom_fields: dict) -> str:
+        details = []
+        zombie_processes = custom_fields.get("ZombieProcesses")
+        if zombie_processes:
+            details.append(
+                f"Zombie Processes found: {zombie_processes['count']} "
+                f"({zombie_processes['pid_usage_pct']:.1f}% of PID space, "
+                f"threshold: {zombie_processes['warning_threshold']}, "
+                f"pid_max: {zombie_processes['pid_max']})"
+            )
+
+        hung_processes = custom_fields.get("HungProcesses", [])
+        if hung_processes:
+            details.append(f"Unkillable Processes found: {len(hung_processes)}")
+            for process in hung_processes:
+                details.append(
+                    f"PID: {process['pid']}\tProcess: {process['process']}\t"
+                    f"User: {process['user']}\tBlocked on: {process['blocked_on']}"
+                )
+        return "\n".join(details)
+
     async def create(self):
         Scheduler.add_task(self.monitor)
 
@@ -94,8 +116,9 @@ class ProcessMonitor(HealthModule):
         """
 
         zombieproc = []
+        custom_fields = {}
         name = self.monitor.report_name
-        report = HealthReport()
+        report = HealthReport(custom_fields=custom_fields)
         hungprocs = []
         for pid in ProcessMonitor.list_pids():
             try:
@@ -136,32 +159,43 @@ class ProcessMonitor(HealthModule):
         zombie_count = len(zombieproc)
         pid_usage_pct = (zombie_count / self.pid_max) * 100
 
-        msgs = []
-
         # PID space critically consumed — fork bomb aftermath or runaway leak
         if pid_usage_pct >= self.PID_SATURATION_PCT:
             report.escalate(HealthStatus.ERROR)
             report.description = "Critical PID table saturation by zombie processes"
             report.recommendations = "Node Reboot required"
-            msgs.append(f"Zombie processes consuming {pid_usage_pct:.1f}% of PID space "
-                        f"({zombie_count}/{self.pid_max})")
+            custom_fields["ZombieProcesses"] = {
+                "count": zombie_count,
+                "pid_usage_pct": pid_usage_pct,
+                "pid_max": self.pid_max,
+                "warning_threshold": self.zombie_warn_threshold
+            }
 
         # High zombie count relative to node size
         elif zombie_count >= self.zombie_warn_threshold:
             report.escalate(HealthStatus.WARNING)
             report.description = "Zombie processes found in the pid table"
-            msgs.append(f"Zombie Processes found: {zombie_count} "
-                        f"(threshold: {self.zombie_warn_threshold}, "
-                        f"pid_max: {self.pid_max})")
+            custom_fields["ZombieProcesses"] = {
+                "count": zombie_count,
+                "pid_usage_pct": pid_usage_pct,
+                "pid_max": self.pid_max,
+                "warning_threshold": self.zombie_warn_threshold
+            }
 
         if hungprocs:
             report.escalate(HealthStatus.ERROR)
-            msgs.append(f"Unkillable Processes found: {len(hungprocs)}")
-            for pid, proc, user, wchan in hungprocs:
-                msgs.append(f"PID: {pid}\tProcess: {proc}\tUser: {user}\tBlocked on: {wchan}")
+            custom_fields["HungProcesses"] = [
+                {
+                    "pid": pid,
+                    "process": proc,
+                    "user": user,
+                    "blocked_on": wchan,
+                }
+                for pid, proc, user, wchan in hungprocs
+            ]
             report.description = "Unkillable hung processes found"
             report.recommendations = "Node Reboot required"
-        report.details = "\n".join(msgs)
+        report.details = ProcessMonitor._format_details(custom_fields)
         await self.reporter.update_report(name=name, report=report)
         response = {}
         response[name] = report.view()
