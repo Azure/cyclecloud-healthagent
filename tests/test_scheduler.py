@@ -9,7 +9,7 @@ import pytest
 import functools
 
 
-@Scheduler.periodic(5)
+@Scheduler.periodic(0.5)
 async def periodic_task(queue: asyncio.Queue, myarg: str):
 
     now = time()
@@ -18,7 +18,7 @@ async def periodic_task(queue: asyncio.Queue, myarg: str):
     except asyncio.QueueFull:
         Scheduler.cancel_task()
 
-@Scheduler.periodic(3)
+@Scheduler.periodic(0.3)
 async def periodic_task2(queue: asyncio.Queue, myarg: str = "Default"):
 
     now = time()
@@ -27,7 +27,7 @@ async def periodic_task2(queue: asyncio.Queue, myarg: str = "Default"):
     except asyncio.QueueFull:
         Scheduler.cancel_task()
 
-@Scheduler.periodic(0.01)
+@Scheduler.periodic(0.005)
 async def periodic_task_kwargs(queue: asyncio.Queue, myarg: str = "Default"):
 
     now = time()
@@ -37,7 +37,7 @@ async def periodic_task_kwargs(queue: asyncio.Queue, myarg: str = "Default"):
         Scheduler.cancel_task()
 
 class A:
-    @Scheduler.periodic(2)
+    @Scheduler.periodic(0.2)
     @classmethod
     def test_periodic_classmethod(self, queue: asyncio.Queue, myarg: str = "Default"):
         now = time()
@@ -46,7 +46,7 @@ class A:
         except asyncio.QueueFull:
             Scheduler.cancel_task()
     @staticmethod
-    @Scheduler.periodic(2)
+    @Scheduler.periodic(0.2)
     def test_periodic_staticmethod(queue: asyncio.Queue, myarg: str = "Default"):
         now = time()
         try:
@@ -55,14 +55,14 @@ class A:
             Scheduler.cancel_task()
 
 @Scheduler.pool
-def on_demand_task(sleep_t: int = 1):
+def on_demand_task(sleep_t: int = 0.1):
 
     # blocking work.
     sleep(sleep_t)
     return sleep_t
 
 @Scheduler.pool
-def on_demand_timed_task(sleep_t: float = 1):
+def on_demand_timed_task(sleep_t: float = 0.1):
 
     # Record wall-clock start/end so the parent can verify pool tasks
     # do not overlap (i.e. they are serialized by _pool_lock).
@@ -94,7 +94,7 @@ async def test_periodic():
     Scheduler.add_task(periodic_task, q1, "hello_from_periodic")
     # allow our task to run 3 times, after which queue will get full and our task should
     # cancel itself.
-    await asyncio.sleep(15)
+    await asyncio.sleep(1.6)
     # now verify the timestamps in the queue.
     # we should also have 3 values in the queue
 
@@ -102,7 +102,7 @@ async def test_periodic():
     assert(arg == "hello_from_periodic")
     for _ in range(2):
         (t_next, arg) = q1.get_nowait()
-        assert 5.0 <= (t_next - t_prev) <= 5.05 # no more than 0.05 away from the expected call interval which is 5 seconds.
+        assert 0.5 <= (t_next - t_prev) <= 0.55 # no more than 0.05 away from the expected call interval which is 0.5 seconds.
         assert(arg == "hello_from_periodic")
         t_prev = t_next
     # no more values should have been added in the queue since our task should have cancelled itself.
@@ -133,7 +133,7 @@ async def test_periodic_kwargs():
     Scheduler.start()
     q1 = asyncio.Queue(maxsize=2)
     Scheduler.add_task(periodic_task_kwargs, q1, myarg="hello_from_kwargs")
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.025)
     Scheduler.stop()
     assert q1.qsize() == 2
     (_, arg1) = q1.get_nowait()
@@ -157,10 +157,10 @@ async def test_pool_serialized():
     """
 
     Scheduler.start()
-    # Schedule two pool tasks at the same time. Each blocks for 2 seconds and
+    # Schedule two pool tasks at the same time. Each blocks for 0.2 seconds and
     # reports its own wall-clock start/end timestamps.
-    t1 = Scheduler.add_task(on_demand_timed_task, 2)
-    t2 = Scheduler.add_task(on_demand_timed_task, 2)
+    t1 = Scheduler.add_task(on_demand_timed_task, 0.2)
+    t2 = Scheduler.add_task(on_demand_timed_task, 0.2)
     (start1, end1), (start2, end2) = await asyncio.gather(t1, t2)
     Scheduler.stop()
 
@@ -177,11 +177,11 @@ async def test_on_demand():
     assert rc == None
     Scheduler.start()
     q1 = asyncio.Queue(maxsize=6)
-    # submit a periodic task that will run every 3 seconds.
+    # submit a periodic task that will run every 0.3 seconds.
     Scheduler.add_task(periodic_task2, q1, "hello_from_periodic")
-    # now submit an on-demand job that will block for 20 seconds and run in a process pool
-    rc = await Scheduler.add_task(on_demand_task, 20)
-    assert(rc == 20)
+    # now submit an on-demand job that will block for 2 seconds and run in a process pool
+    rc = await Scheduler.add_task(on_demand_task, 2)
+    assert(rc == 2)
     # our periodic task should have run 6 times by then and cancelled it self on the 7th.
     assert(q1.qsize() == 6)
     Scheduler.stop()
@@ -199,7 +199,7 @@ async def test_multiple_periodic():
     q1 = asyncio.Queue(maxsize=15)
     Scheduler.add_task(periodic_task, q1, "hello_1")
     Scheduler.add_task(periodic_task2, q1, "hello_2")
-    await asyncio.sleep(20)
+    await asyncio.sleep(1.95)
     Scheduler.stop()
     # total items in the queue should be 11
     assert q1.qsize() == 11
@@ -212,7 +212,7 @@ async def test_class_periodic():
     Scheduler.start()
     q1 = asyncio.Queue(maxsize=5)
     Scheduler.add_task(A.test_periodic_classmethod, q1, "hello_1")
-    await asyncio.sleep(11)
+    await asyncio.sleep(1.1)
     Scheduler.stop()
     # total items in the queue should be 5
     assert q1.qsize() == 5
@@ -225,7 +225,7 @@ async def test_static_periodic():
     Scheduler.start()
     q1 = asyncio.Queue(maxsize=5)
     Scheduler.add_task(A.test_periodic_staticmethod, q1, "hello_1")
-    await asyncio.sleep(11)
+    await asyncio.sleep(1.1)
     Scheduler.stop()
     # total items in the queue should be 5
     assert q1.qsize() == 5
@@ -238,11 +238,11 @@ async def test_signal_handling():
     q1 = asyncio.Queue(maxsize=15)
     Scheduler.add_task(periodic_task, q1, "hello_1")
     Scheduler.add_task(periodic_task2, q1, "hello_2")
-    # let it run for 10 seconds, our periodic tasks would have added 6 items by then.
-    await asyncio.sleep(10)
+    # let it run for 0.95 seconds, our periodic tasks would have added 6 items by then.
+    await asyncio.sleep(0.95)
     os.kill(os.getpid(), signal.SIGINT)
     # give event loop chance to run the handler
-    await asyncio.sleep(0.1)
+    await asyncio.sleep(0.01)
     # check signal handler set the stop event
     assert Scheduler.stop_event.is_set() == True
     # validate our tasks dropped items in the queue as expected
